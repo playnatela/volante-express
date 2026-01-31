@@ -3,7 +3,7 @@
 import { useEffect, useState, use } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
-import { Camera, Save, ArrowLeft, DollarSign, Package, CreditCard } from 'lucide-react';
+import { Camera, Save, ArrowLeft, DollarSign, Package, CreditCard, Image as ImageIcon } from 'lucide-react';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -77,6 +77,13 @@ export default function AtendimentoPage({ params }) {
         }).eq('id', id);
 
       if (updateError) throw updateError;
+      
+      // Baixa no estoque
+      const material = inventory.find(i => i.id === selectedMaterial);
+      if (material) {
+         await supabase.from('inventory').update({ quantity: material.quantity - 1 }).eq('id', selectedMaterial);
+      }
+
       router.push('/'); router.refresh();
     } catch (error) { alert('Erro ao finalizar.'); setSubmitting(false); }
   };
@@ -103,17 +110,19 @@ export default function AtendimentoPage({ params }) {
           <p className="text-slate-500 text-sm mt-1">{appointment.customer_name}</p>
         </div>
 
-        {/* 1. Foto */}
+        {/* 1. Foto (Galeria ou Câmera) */}
         <div className="space-y-2">
             <label className="text-sm font-medium text-slate-400 ml-1">1. Comprovante (Foto)</label>
             <label className="cursor-pointer block w-full aspect-video rounded-2xl border-2 border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-800 transition-all flex flex-col items-center justify-center relative overflow-hidden group">
-                <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" />
+                <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
                 {photoPreview ? (
                 <img src={photoPreview} className="w-full h-full object-cover" />
                 ) : (
                 <div className="text-center text-slate-500 group-hover:text-blue-400 transition-colors">
-                    <Camera size={36} className="mx-auto mb-2" />
-                    <span className="text-xs font-medium">Toque para fotografar</span>
+                    <div className="flex justify-center gap-2 mb-2">
+                        <Camera size={24} /> <ImageIcon size={24} />
+                    </div>
+                    <span className="text-xs font-medium">Toque para Câmera ou Galeria</span>
                 </div>
                 )}
             </label>
@@ -130,7 +139,7 @@ export default function AtendimentoPage({ params }) {
                 value={selectedMaterial}
                 onChange={e => setSelectedMaterial(e.target.value)}
             >
-                <option value="" className="text-slate-500">Selecione o volante...</option>
+                <option value="" className="text-slate-500">Selecione o revestimento...</option>
                 {inventory.map(i => (
                 <option key={i.id} value={i.id}>{i.name} (Estoque: {i.quantity})</option>
                 ))}
