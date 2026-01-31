@@ -1,20 +1,14 @@
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata = {
-  title: "Volante Expressp",
-  description: "App interno",
+  title: "Volante Express", 
+  description: "Gestão de Instalação de Volantes",
   manifest: "/manifest.json",
+  icons: {
+    icon: '/icon.png', // Força o uso do seu logo png como favicon
+    shortcut: '/icon.png',
+    apple: '/icon.png', // Ícone para iPhone
+  }
 };
 
 export const viewport = {
@@ -27,12 +21,8 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
-      </body>
+    <html lang="pt-BR">
+      <body>{children}</body>
     </html>
   );
 }
