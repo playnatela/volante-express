@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Phone, Clock, Car, ChevronRight, LogOut, MapPin } from 'lucide-react';
+import { Phone, Clock, Car, ChevronRight, LogOut, MapPin, CalendarDays } from 'lucide-react';
 import { format, parseISO, isToday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -23,25 +23,18 @@ export default function HomePage() {
   }, []);
 
   async function checkUser() {
-    // 1. Verifica se está logado
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
       return;
     }
 
-    // 2. Busca perfil para saber a região
     const { data: profile } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .single();
     
-    // Se não tiver perfil criado ainda, assume um padrão ou mostra erro
-    if (!profile) {
-        console.log("Usuário sem perfil na tabela 'profiles'.");
-    }
-
     setUserProfile(profile);
     fetchAppointments(profile?.region_id);
   }
@@ -73,52 +66,64 @@ export default function HomePage() {
       : format(date, "dd/MM 'às' HH:mm", { locale: ptBR });
   };
 
-  if (loading) return <div className="p-10 text-center text-slate-500">Carregando agenda...</div>;
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Carregando agenda...</div>;
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      {/* Header */}
-      <header className="bg-slate-900 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
+    <div className="min-h-screen bg-slate-950 pb-20 text-slate-200">
+      {/* Header Escuro com Gradiente */}
+      <header className="bg-slate-900 border-b border-slate-800 p-5 sticky top-0 z-10 flex justify-between items-center shadow-lg">
         <div>
-          <h1 className="text-lg font-bold">Volante Express</h1>
-          <p className="text-xs text-slate-400">Região: {userProfile?.region_id || '...'}</p>
+          <h1 className="text-xl font-bold text-white tracking-tight">Volante Express</h1>
+          <p className="text-xs text-blue-400 font-medium uppercase tracking-wider flex items-center gap-1">
+            <MapPin size={10} /> {userProfile?.region_id || '...'}
+          </p>
         </div>
-        <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700">
-          <LogOut size={16} />
+        <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400 transition-colors">
+          <LogOut size={18} />
         </button>
       </header>
 
       {/* Lista */}
-      <main className="p-4 max-w-md mx-auto space-y-4">
+      <main className="p-4 max-w-md mx-auto space-y-4 mt-2">
         {appointments.length === 0 ? (
-          <div className="text-center mt-10 p-6 bg-white rounded-xl shadow-sm text-slate-500">
-            Nenhum serviço pendente nesta região.
+          <div className="text-center mt-10 p-8 bg-slate-900 rounded-2xl border border-slate-800 shadow-xl">
+            <CalendarDays size={48} className="mx-auto text-slate-700 mb-4"/>
+            <p className="text-slate-400 font-medium">Nenhum serviço pendente.</p>
+            <p className="text-slate-600 text-sm mt-1">Aproveite o descanso!</p>
           </div>
         ) : (
           appointments.map((item) => (
-            <div key={item.id} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex items-center gap-2 text-blue-800 text-sm font-medium">
+            <div key={item.id} className="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 overflow-hidden group hover:border-blue-900 transition-all">
+              
+              {/* Faixa de Horário */}
+              <div className="bg-slate-950/50 px-5 py-3 border-b border-slate-800 flex items-center gap-2 text-blue-400 text-sm font-semibold">
                 <Clock size={16} /> {formatData(item.appointment_at)}
               </div>
-              <div className="p-4">
-                <div className="flex justify-between items-start mb-3">
+
+              <div className="p-5">
+                <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h2 className="text-lg font-bold text-slate-800">{item.vehicle_model}</h2>
-                    <p className="text-slate-500 text-sm">Ano: {item.vehicle_year}</p>
+                    <h2 className="text-xl font-bold text-white leading-tight">{item.vehicle_model}</h2>
+                    <p className="text-slate-500 text-sm mt-1">Ano: {item.vehicle_year}</p>
                   </div>
-                  <div className="bg-slate-100 p-2 rounded-full"><Car size={20} className="text-slate-600"/></div>
+                  <div className="bg-slate-800 p-3 rounded-xl text-blue-400 shadow-inner">
+                    <Car size={24} />
+                  </div>
                 </div>
                 
-                <p className="text-slate-700 font-medium mb-4">{item.customer_name}</p>
+                <div className="mb-6 pb-4 border-b border-slate-800/50">
+                    <p className="text-xs text-slate-500 uppercase font-bold mb-1">Cliente</p>
+                    <p className="text-slate-300 font-medium text-lg">{item.customer_name}</p>
+                </div>
 
-                <div className="flex gap-2">
+                <div className="flex gap-3">
                   {item.customer_phone && (
-                    <a href={`https://wa.me/55${item.customer_phone.replace(/\D/g, '')}`} target="_blank" className="flex-1 bg-green-50 text-green-700 py-2 rounded-lg flex justify-center items-center gap-2 text-sm font-bold border border-green-200">
-                      <Phone size={16} /> WhatsApp
+                    <a href={`https://wa.me/55${item.customer_phone.replace(/\D/g, '')}`} target="_blank" className="flex-1 bg-slate-800 hover:bg-slate-700 text-green-500 py-3 rounded-xl flex justify-center items-center gap-2 text-sm font-bold border border-slate-700 transition-all active:scale-95">
+                      <Phone size={18} /> WhatsApp
                     </a>
                   )}
-                  <Link href={`/atendimento/${item.id}`} className="flex-1 bg-slate-900 text-white py-2 rounded-lg flex justify-center items-center gap-2 text-sm font-bold">
-                    Iniciar <ChevronRight size={16} />
+                  <Link href={`/atendimento/${item.id}`} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl flex justify-center items-center gap-2 text-sm font-bold shadow-lg shadow-blue-900/20 transition-all active:scale-95">
+                    Iniciar <ChevronRight size={18} />
                   </Link>
                 </div>
               </div>
