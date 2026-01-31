@@ -16,39 +16,58 @@ export async function POST(request) {
     }
 
     const body = await request.json();
-    console.log('WEBHOOK GHL:', JSON.stringify(body, null, 2));
+    console.log('WEBHOOK PAYLOAD:', JSON.stringify(body, null, 2)); // Log para debug
 
-    // 1. O SEGREDO DO ID ÚNICO (Correção da Duplicidade)
-    // Pega o ID fixo do agendamento. Se não tiver, usa o ID do contato (mas nunca Date.now)
+    // 1. ID ÚNICO BLINDADO
     const uniqueId = 
       body.calendar?.appointmentId || 
       body.appointment?.id || 
       body.id ||
-      body.contact_id; // Último recurso
+      body.contact_id; 
 
     if (!uniqueId) {
-      return NextResponse.json({ error: 'Nenhum ID identificável encontrado.' }, { status: 400 });
+      return NextResponse.json({ error: 'Nenhum ID identificável.' }, { status: 400 });
     }
 
-    // 2. STATUS INTELIGENTE (Cancelamento e No-Show)
-    // Lê o status que veio do GHL
+    // 2. CORREÇÃO DE FUSO HORÁRIO (A Mágica das 3 horas)
+    // O GHL manda ex: "2026-02-01T11:00:00". O servidor lê como UTC.
+    // Vamos forçar o sufixo "-03:00" para dizer que isso é Brasil.
+    let rawDate = 
+      body.calendar?.startTime || 
+      body.appointment?.start_time || 
+      body.start_time;
+
+    let finalDate = undefined;
+
+    if (rawDate) {
+      // Se a data não tem "Z" (UTC) nem fuso (+/-), adicionamos -03:00
+      if (!rawDate.includes('Z') && !rawDate.includes('+') && !rawDate.match(/-\d\d:\d\d$/)) {
+        finalDate = rawDate + '-03:00';
+      } else {
+        finalDate = rawDate;
+      }
+    }
+
+    // 3. STATUS INTELIGENTE
     const ghlStatus = 
       body.calendar?.appointmentStatus || 
       body.appointment?.status || 
       body.status || 
       'confirmed';
 
-    // Traduz para o App
-    let appStatus = 'pendente'; // Padrão
+    console.log('Status Recebido:', ghlStatus); // Para vermos nos logs se o cancelamento chega
+
+    let appStatus = 'pendente'; 
     const statusLower = ghlStatus.toLowerCase();
 
-    if (statusLower === 'cancelled' || statusLower === 'canceled' || statusLower === 'noshow' || statusLower === 'invalid') {
+    // Lista ampliada de status de cancelamento
+    if (['cancelled', 'canceled', 'noshow', 'invalid', 'abandoned'].includes(statusLower)) {
       appStatus = 'cancelado';
-    } else if (statusLower === 'completed' || statusLower === 'finished') {
+    } else if (['completed', 'finished', 'executed'].includes(statusLower)) {
       appStatus = 'concluido';
     }
 
-    // 3. RECUPERAÇÃO DE DADOS (Igual ao anterior que funcionou)
+    // 4. RECUPERAÇÃO DE DADOS
     const model = 
       body['Marca e Modelo do Veículo'] || 
       body.contact?.['Marca e Modelo do Veículo'] || 
@@ -61,39 +80,33 @@ export async function POST(request) {
       body.ano_do_veculo || 
       '';
 
-    const rawDate = 
-      body.calendar?.startTime || 
-      body.appointment?.start_time || 
-      body.start_time;
-    
-    // Se não vier data (ex: atualização só de contato), mantém a que já existe no banco ou usa agora
-    const finalDate = rawDate ? rawDate : undefined; 
-
-    // 4. PREPARAR DADOS PARA SALVAR
+    // 5. SALVAR
     const appointmentData = {
-      ghl_id: uniqueId, // <--- O ID CORRETO
+      ghl_id: uniqueId,
       customer_name: body.contact?.name || body.full_name || (body.first_name ? `${body.first_name} ${body.last_name}` : 'Sem Nome'),
       customer_phone: body.contact?.phone || body.phone || '',
       vehicle_model: model,
       vehicle_year: year,
-      status: appStatus, // <--- STATUS ATUALIZADO
+      status: appStatus, 
       region_id: region
     };
 
-    // Só atualiza a data se ela veio no payload (para não estragar edições manuais)
     if (finalDate) {
       appointmentData.appointment_at = finalDate;
     }
 
-    // 5. SALVAR (Upsert)
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('appointments')
-      .upsert(appointmentData, { onConflict: 'ghl_id' }) // Usa o ID Único para saber se atualiza ou cria
-      .select();
+      .upsert(appointmentData, { onConflict: 'ghl_id' });
 
     if (error) throw error;
 
-    return NextResponse.json({ message: 'Sincronizado com sucesso!', id: uniqueId, status: appStatus }, { status: 200 });
+    return NextResponse.json({ 
+      message: 'Sincronizado!', 
+      id: uniqueId, 
+      status: appStatus,
+      time_fixed: finalDate 
+    }, { status: 200 });
 
   } catch (err) {
     console.error('Erro Webhook:', err);
