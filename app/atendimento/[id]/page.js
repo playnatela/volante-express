@@ -3,7 +3,7 @@
 import { useEffect, useState, use } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
-import { Camera, Save, ArrowLeft, DollarSign, Package, CreditCard, Image as ImageIcon, Calculator } from 'lucide-react';
+import { Camera, Save, ArrowLeft, DollarSign, Package, CreditCard, Image as ImageIcon } from 'lucide-react';
 
 export default function AtendimentoPage({ params }) {
   const resolvedParams = use(params);
@@ -35,22 +35,17 @@ export default function AtendimentoPage({ params }) {
   async function loadData() {
     try {
       // 1. Busca Agendamento
-      const { data: appData, error: appError } = await supabase
-        .from('appointments').select('*').eq('id', id).single();
+      const { data: appData, error: appError } = await supabase.from('appointments').select('*').eq('id', id).single();
       if (appError) throw appError;
       setAppointment(appData);
 
       if (appData.region_id) {
-        // 2. Busca Estoque da Região
-        const { data: invData } = await supabase
-          .from('inventory').select('*').eq('region_id', appData.region_id).gt('quantity', 0).order('name');
+        // 2. Busca Estoque
+        const { data: invData } = await supabase.from('inventory').select('*').eq('region_id', appData.region_id).gt('quantity', 0).order('name');
         setInventory(invData || []);
 
-        // 3. Busca Contas (Globais ou Regionais)
-        const { data: accData } = await supabase
-          .from('accounts')
-          .select('*')
-          .or(`region_id.is.null,region_id.eq.${appData.region_id}`); 
+        // 3. Busca Contas
+        const { data: accData } = await supabase.from('accounts').select('*').or(`region_id.is.null,region_id.eq.${appData.region_id}`); 
         setAccounts(accData || []);
       }
 
@@ -63,19 +58,7 @@ export default function AtendimentoPage({ params }) {
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setPhotoFile(file);
-      setPhotoPreview(URL.createObjectURL(file));
-    }
-  };
-
-  const getSimulatedNet = () => {
-    if (!amount || !paymentMethod) return 0;
-    const currentInstallments = paymentMethod === 'credito' ? parseInt(installments) : 1;
-    const rateObj = rates.find(r => r.method === paymentMethod && r.installments === currentInstallments);
-    const taxPercent = rateObj ? rateObj.rate_percent : 0;
-    const gross = parseFloat(amount);
-    return gross - (gross * (taxPercent / 100));
+    if (file) { setPhotoFile(file); setPhotoPreview(URL.createObjectURL(file)); }
   };
 
   const handleFinish = async () => {
@@ -94,36 +77,30 @@ export default function AtendimentoPage({ params }) {
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('service-photos').getPublicUrl(filePath);
 
-      // 2. Financeiro (Taxas)
+      // 2. Cálculos Financeiros (Internos)
       const grossVal = parseFloat(amount);
       const finalInstallments = paymentMethod === 'credito' ? parseInt(installments) : 1;
       const rateObj = rates.find(r => r.method === paymentMethod && r.installments === finalInstallments);
       const taxPercent = rateObj ? rateObj.rate_percent : 0;
       const netVal = grossVal - (grossVal * (taxPercent / 100));
 
-      // 3. Escolher Conta de Destino (Lógica da Estrela/Padrão)
+      // 3. Escolher Conta de Destino
       let targetAccountId = null;
-      
       if (paymentMethod === 'dinheiro') {
-        // SE FOR DINHEIRO: Prioridade é Carteira da Região
         targetAccountId = accounts.find(a => a.type === 'carteira' && a.region_id === appointment.region_id)?.id;
-        // Fallback: Qualquer carteira
         if (!targetAccountId) targetAccountId = accounts.find(a => a.type === 'carteira')?.id;
-      
       } else {
-        // SE FOR PIX/CARTÃO: Prioridade é Banco com Estrela (is_default)
         targetAccountId = accounts.find(a => a.type === 'banco' && a.is_default)?.id;
-        // Fallback: Qualquer Banco
         if (!targetAccountId) targetAccountId = accounts.find(a => a.type === 'banco')?.id;
       }
 
       if (!targetAccountId) {
-         if(!confirm('Atenção: Nenhuma conta compatível encontrada para receber este valor. Salvar assim mesmo?')) {
+         if(!confirm('Atenção: Nenhuma conta compatível encontrada. Salvar sem vincular financeiro?')) {
              setSubmitting(false); return;
          }
       }
 
-      // 4. Update no Agendamento
+      // 4. Salvar no Banco
       const { error: updateError } = await supabase.from('appointments').update({
           status: 'concluido',
           material_used_id: selectedMaterial,
@@ -151,10 +128,7 @@ export default function AtendimentoPage({ params }) {
 
       router.push('/'); router.refresh();
       
-    } catch (error) { 
-        alert('Erro: ' + error.message); 
-        setSubmitting(false); 
-    }
+    } catch (error) { alert('Erro: ' + error.message); setSubmitting(false); }
   };
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-500">Carregando...</div>;
@@ -219,13 +193,6 @@ export default function AtendimentoPage({ params }) {
                         ))}
                     </select>
                     {rates.filter(r => r.method === 'credito').length === 0 && <p className="text-red-400 text-xs mt-2">Sem taxas cadastradas no Admin.</p>}
-                </div>
-            )}
-
-            {amount && paymentMethod && (
-                <div className="bg-slate-900/50 p-3 rounded-xl border border-dashed border-slate-700 flex justify-between items-center text-sm">
-                    <span className="text-slate-500 flex items-center gap-2"><Calculator size={14}/> Líquido (Empresa):</span>
-                    <span className="font-mono font-bold text-green-400">R$ {getSimulatedNet().toFixed(2)}</span>
                 </div>
             )}
         </div>
