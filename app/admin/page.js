@@ -2,10 +2,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
-import { TrendingDown, Filter, Settings, Trash2, Banknote, Calendar } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+import { TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, Star, Package, Plus, Save } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function AdminPage() {
   const router = useRouter();
@@ -20,17 +18,23 @@ export default function AdminPage() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
   const [loading, setLoading] = useState(true);
   
-  // Dados
+  // Dados Principais
   const [appointments, setAppointments] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [rates, setRates] = useState([]);
-  const [inventory, setInventory] = useState([]); // Mantido pra não quebrar, mas simplificado na visualização
+  const [inventory, setInventory] = useState([]); 
   
-  // Forms
+  // Forms & Edição
   const [newAccount, setNewAccount] = useState({ name: '', type: 'banco' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', category: 'Operacional', account_id: '' });
   const [editingRate, setEditingRate] = useState(null);
+  
+  // Estoque (Trazendo de volta!)
+  const [newItem, setNewItem] = useState({ name: '', quantity: 0, min_threshold: 5 });
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [isEditingInv, setIsEditingInv] = useState(null);
+  const [editInvForm, setEditInvForm] = useState({});
 
   useEffect(() => { loadRegions(); }, []);
   useEffect(() => { if (selectedRegion) fetchData(); }, [selectedRegion, activeTab]);
@@ -43,44 +47,41 @@ export default function AdminPage() {
   async function fetchData() {
     setLoading(true);
     
-    // 1. Agendamentos e Despesas (Regionais)
+    // 1. Estoque (Restaurado)
+    const { data: inv } = await supabase.from('inventory').select('*').eq('region_id', selectedRegion).order('name');
+    setInventory(inv || []);
+    
+    // 2. Agendamentos e Despesas
     const { data: apps } = await supabase.from('appointments').select('*').eq('status', 'concluido').eq('region_id', selectedRegion);
     setAppointments(apps || []);
     
     const { data: exp } = await supabase.from('expenses').select('*').eq('region_id', selectedRegion);
     setExpenses(exp || []);
     
-    // 2. Contas: Busca Globais (Bancos) + Regionais (Carteiras desta região)
+    // 3. Contas (Globais ou da Região)
     const { data: acc } = await supabase.from('accounts')
         .select('*')
         .or(`region_id.is.null,region_id.eq.${selectedRegion}`) 
-        .order('type'); // Agrupa por tipo
+        .order('type', { ascending: true })
+        .order('name', { ascending: true });
     setAccounts(acc || []);
 
-    // 3. Taxas
+    // 4. Taxas
     const { data: rt } = await supabase.from('payment_rates').select('*').order('installments');
     setRates(rt || []);
 
     setLoading(false);
   }
 
-  // --- AÇÕES ---
+  // --- AÇÕES CONFIGURAÇÕES ---
   async function handleAddAccount(e) {
     e.preventDefault();
-    
-    // REGRA NOVA: Banco é Global (region_id = null), Carteira é Regional
     const regionToSave = newAccount.type === 'banco' ? null : selectedRegion;
-
-    const { error } = await supabase.from('accounts').insert([{ 
-        ...newAccount, 
-        region_id: regionToSave, 
-        balance: 0 
-    }]);
-
+    const { error } = await supabase.from('accounts').insert([{ ...newAccount, region_id: regionToSave, balance: 0 }]);
     if (!error) { 
         setNewAccount({ name: '', type: 'banco' }); 
         fetchData(); 
-        alert(newAccount.type === 'banco' ? 'Banco Global criado!' : `Carteira criada para ${selectedRegion}!`);
+        alert('Conta criada com sucesso!');
     }
   }
 
@@ -90,18 +91,26 @@ export default function AdminPage() {
     fetchData();
   }
 
+  // NOVA FUNÇÃO: Definir conta padrão
+  async function handleSetDefault(accountId) {
+    // 1. Remove padrão de todas as contas globais (bancos)
+    await supabase.from('accounts').update({ is_default: false }).is('region_id', null);
+    // 2. Define a nova padrão
+    await supabase.from('accounts').update({ is_default: true }).eq('id', accountId);
+    fetchData();
+  }
+
   async function handleUpdateRate(rate) {
     await supabase.from('payment_rates').update({ rate_percent: rate.rate_percent }).eq('id', rate.id);
     setEditingRate(null);
     fetchData();
   }
 
+  // --- AÇÕES FINANCEIRO ---
   async function handleAddExpense(e) {
     e.preventDefault();
     if (!newExpense.account_id) return alert('Selecione a conta!');
-    
     const { error } = await supabase.from('expenses').insert([{ ...newExpense, region_id: selectedRegion, date: new Date().toISOString() }]);
-    
     if (!error) {
         const acc = accounts.find(a => a.id === newExpense.account_id);
         if(acc) {
@@ -112,7 +121,21 @@ export default function AdminPage() {
     }
   }
 
-  // Cálculos
+  // --- AÇÕES ESTOQUE (RESTAURADAS) ---
+  async function handleAddInventory(e) {
+    e.preventDefault();
+    await supabase.from('inventory').insert([{ ...newItem, region_id: selectedRegion }]);
+    setNewItem({ name: '', quantity: 0, min_threshold: 5 });
+    setShowAddForm(false);
+    fetchData();
+  }
+  async function handleUpdateInventory(id) {
+    await supabase.from('inventory').update({ quantity: editInvForm.quantity }).eq('id', id);
+    setIsEditingInv(null);
+    fetchData();
+  }
+
+  // Cálculos Dashboard
   const filteredData = useMemo(() => {
     const apps = appointments.filter(a => (a.completed_at || a.created_at).startsWith(selectedMonth));
     const exps = expenses.filter(e => (e.date || e.created_at).startsWith(selectedMonth));
@@ -151,7 +174,7 @@ export default function AdminPage() {
 
         {/* Abas */}
         <div className="flex gap-2 overflow-x-auto pb-2">
-            {['dashboard', 'financeiro', 'configuracoes'].map(tab => (
+            {['dashboard', 'financeiro', 'estoque', 'configuracoes'].map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)} 
                   className={`px-6 py-2 rounded-lg text-sm font-bold capitalize whitespace-nowrap ${activeTab === tab ? 'bg-slate-900 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-gray-50'}`}>
                     {tab === 'configuracoes' ? <span className="flex items-center gap-2"><Settings size={14}/> Config</span> : tab}
@@ -173,15 +196,16 @@ export default function AdminPage() {
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                         <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Banknote size={20}/> Saldos Atuais</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                            {/* Mostra Bancos Globais */}
                             {accounts.filter(a => a.type === 'banco').map(acc => (
-                                <div key={acc.id} className="p-4 rounded-xl border bg-blue-50 border-blue-200">
-                                    <p className="text-xs font-bold uppercase text-slate-500 mb-1 flex justify-between">Banco Global <span className="text-blue-600">🏢</span></p>
+                                <div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-400' : 'bg-blue-50 border-blue-200'}`}>
+                                    <p className="text-xs font-bold uppercase text-slate-500 mb-1 flex justify-between">
+                                        Banco Global {acc.is_default && '⭐'}
+                                        <span className="text-blue-600">🏢</span>
+                                    </p>
                                     <p className="font-bold text-lg text-slate-800">{acc.name}</p>
                                     <p className="text-2xl font-bold mt-2 text-slate-900">R$ {Number(acc.balance).toFixed(2)}</p>
                                 </div>
                             ))}
-                            {/* Mostra Carteiras Regionais */}
                             {accounts.filter(a => a.type === 'carteira').map(acc => (
                                 <div key={acc.id} className="p-4 rounded-xl border bg-yellow-50 border-yellow-200">
                                     <p className="text-xs font-bold uppercase text-slate-500 mb-1 flex justify-between">Caixa {selectedRegion} <span className="text-yellow-600">💰</span></p>
@@ -211,7 +235,6 @@ export default function AdminPage() {
                             <button className="bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700">Salvar</button>
                         </form>
                     </div>
-                    {/* Tabela de Transações */}
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                         <table className="w-full text-sm">
                              <thead className="bg-gray-50 text-slate-500 font-medium"><tr><th className="p-4 text-left">Data</th><th className="p-4 text-left">Desc</th><th className="p-4 text-right">Valor</th></tr></thead>
@@ -231,7 +254,56 @@ export default function AdminPage() {
                 </div>
             )}
 
-            {/* CONFIGURAÇÕES */}
+            {/* ESTOQUE (DE VOLTA E COMPLETO) */}
+            {activeTab === 'estoque' && (
+                <div className="space-y-6 animate-in fade-in">
+                    <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                         <div>
+                            <h3 className="font-bold text-slate-700 flex items-center gap-2"><Package size={20}/> Inventário: {selectedRegion}</h3>
+                            <p className="text-xs text-slate-500">Gerencie os materiais desta regional.</p>
+                         </div>
+                         <button onClick={() => setShowAddForm(!showAddForm)} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-500"><Plus size={18}/> Novo Item</button>
+                    </div>
+                    
+                    {showAddForm && (
+                        <form onSubmit={handleAddInventory} className="bg-blue-50 p-6 rounded-2xl grid grid-cols-4 gap-4 items-end border border-blue-100">
+                            <div className="col-span-2"><label className="text-xs font-bold text-slate-500">Nome do Material</label><input className="w-full p-3 border rounded-xl" placeholder="Ex: Capa Lisa Preta" required value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /></div>
+                            <div><label className="text-xs font-bold text-slate-500">Quantidade</label><input className="w-full p-3 border rounded-xl" type="number" required value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} /></div>
+                            <button className="bg-green-600 text-white p-3 rounded-xl font-bold hover:bg-green-500">Salvar</button>
+                        </form>
+                    )}
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {inventory.map(item => (
+                            <div key={item.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center relative overflow-hidden">
+                                {item.quantity <= item.min_threshold && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500"></div>}
+                                <div>
+                                    <h4 className="font-bold text-slate-800 text-lg">{item.name}</h4>
+                                    <span className={`text-xs px-2 py-1 rounded-md font-bold ${item.quantity <= item.min_threshold ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-slate-500'}`}>
+                                        {item.quantity <= item.min_threshold ? 'Estoque Baixo' : 'Normal'}
+                                    </span>
+                                </div>
+                                <div className="text-right">
+                                    {isEditingInv === item.id ? (
+                                        <div className="flex items-center gap-2">
+                                            <input className="w-16 p-2 border rounded-lg text-center font-bold" type="number" value={editInvForm.quantity} onChange={e => setEditInvForm({...editInvForm, quantity: e.target.value})} />
+                                            <button onClick={() => handleUpdateInventory(item.id)} className="bg-green-100 text-green-700 p-2 rounded-lg hover:bg-green-200"><Save size={18}/></button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-end gap-1">
+                                            <span className="text-3xl font-bold text-slate-800">{item.quantity}</span>
+                                            <button onClick={() => { setIsEditingInv(item.id); setEditInvForm(item); }} className="text-xs text-blue-600 hover:underline font-bold">Ajustar</button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                        {inventory.length === 0 && <p className="col-span-full text-center py-10 text-slate-400">Nenhum item cadastrado nesta região.</p>}
+                    </div>
+                </div>
+            )}
+
+            {/* CONFIGURAÇÕES (ATUALIZADO COM CONTA PADRÃO) */}
             {activeTab === 'configuracoes' && (
                 <div className="space-y-8 animate-in fade-in">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -239,59 +311,10 @@ export default function AdminPage() {
                             <h4 className="font-bold text-slate-800 mb-4">Contas Disponíveis</h4>
                             <div className="space-y-2">
                                 {accounts.map(acc => (
-                                    <div key={acc.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-200">
-                                        <div>
-                                            <p className="font-bold text-slate-800">{acc.name}</p>
-                                            <p className="text-xs text-slate-500">{acc.type === 'banco' ? 'Global (Todas Regionais)' : `Regional (${selectedRegion})`}</p>
-                                        </div>
-                                        <button onClick={() => handleDeleteAccount(acc.id)} className="text-red-400 p-2"><Trash2 size={16}/></button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-fit">
-                            <h4 className="font-bold text-slate-800 mb-4">Adicionar Conta</h4>
-                            <form onSubmit={handleAddAccount} className="space-y-4">
-                                <div><label className="text-xs font-bold text-slate-500">Nome</label><input className="w-full p-3 border rounded-xl" required value={newAccount.name} onChange={e => setNewAccount({...newAccount, name: e.target.value})} placeholder="Ex: Nubank ou Caixa Loja" /></div>
-                                <div>
-                                    <label className="text-xs font-bold text-slate-500">Tipo</label>
-                                    <select className="w-full p-3 border rounded-xl" value={newAccount.type} onChange={e => setNewAccount({...newAccount, type: e.target.value})}>
-                                        <option value="banco">Banco (Global/Único)</option>
-                                        <option value="carteira">Carteira (Dinheiro desta Região)</option>
-                                    </select>
-                                    <p className="text-xs text-slate-400 mt-1">
-                                        {newAccount.type === 'banco' ? 'Visível para todas as cidades.' : `Visível apenas para ${selectedRegion}.`}
-                                    </p>
-                                </div>
-                                <button className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500">Criar</button>
-                            </form>
-                        </div>
-                    </div>
-
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                        <h4 className="font-bold text-slate-800 mb-4">Taxas de Maquininha (Globais)</h4>
-                        <table className="w-full text-sm">
-                            <tbody className="divide-y divide-gray-100">
-                                {rates.map(rate => (
-                                    <tr key={rate.id}>
-                                        <td className="p-3 font-bold capitalize">{rate.method} {rate.installments > 1 && `${rate.installments}x`}</td>
-                                        <td className="p-3 text-right">
-                                            {editingRate?.id === rate.id ? (
-                                                <div className="flex justify-end gap-2"><input className="w-16 border rounded text-center" type="number" step="0.01" value={editingRate.rate_percent} onChange={e => setEditingRate({...editingRate, rate_percent: e.target.value})} /><button onClick={() => handleUpdateRate(editingRate)} className="text-green-600 font-bold">OK</button></div>
-                                            ) : (
-                                                <button onClick={() => setEditingRate(rate)} className="text-blue-600 font-bold hover:underline">{rate.rate_percent}%</button>
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-            </>
-        )}
-      </div>
-    </div>
-  );
-}
+                                    <div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}>
+                                        <div className="flex items-center gap-3">
+                                            {/* CHECKBOX DE CONTA PADRÃO */}
+                                            {acc.type === 'banco' && (
+                                                <button 
+                                                    onClick={() => handleSetDefault(acc.id)}
+                                                    className={`p-1 rounded-full transition-colors ${acc.is_default ? 'text-yellow-500' : 'text-gray-300
