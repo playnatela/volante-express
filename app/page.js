@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
-import { Plus, Car, MapPin, Calendar, ChevronRight, Loader2, ListTodo, Wallet, User, Zap } from 'lucide-react';
+import { Plus, Car, MapPin, Calendar, ChevronRight, Loader2, ListTodo, Wallet, User } from 'lucide-react';
 
 export default function HomePage() {
   const router = useRouter();
@@ -32,7 +32,6 @@ export default function HomePage() {
   }
 
   async function fetchData(userId) {
-    // Busca apenas agendamentos pendentes/agendados para a lista principal
     const { data: apps } = await supabase
       .from('appointments')
       .select('*')
@@ -74,20 +73,24 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 pb-32">
       
-      {/* --- HEADER NOVO --- */}
-      <div className="bg-slate-900 pt-10 pb-6 rounded-b-[40px] shadow-2xl border-b border-slate-800 flex flex-col items-center justify-center relative overflow-hidden">
+      {/* --- HEADER COM LOGO HORIZONTAL --- */}
+      <div className="bg-slate-900 pt-10 pb-8 rounded-b-[40px] shadow-2xl border-b border-slate-800 flex flex-col items-center justify-center relative overflow-hidden">
         
         {/* Efeito de Fundo (Glow) */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-64 bg-blue-600/10 blur-[80px] rounded-full pointer-events-none"></div>
 
-        {/* Logo Circular */}
-        <div className="relative z-10 w-24 h-24 bg-gradient-to-br from-blue-600 to-slate-800 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/40 mb-4 border-4 border-slate-800">
-             <Zap size={40} className="text-white fill-current" />
+        {/* LOGO HORIZONTAL */}
+        {/* Certifique-se de que o arquivo está na pasta 'public' */}
+        <div className="relative z-10 mb-2 px-6">
+             <img 
+                src="/icon-horizontal.png" 
+                alt="Volante Express" 
+                className="h-16 object-contain drop-shadow-lg" 
+             />
         </div>
 
-        {/* Título e Boas-vindas */}
-        <h1 className="text-2xl font-black text-white tracking-tight">VOLANTE EXPRESS</h1>
-        <p className="text-slate-400 text-sm mt-1">Bem-vindo, <span className="text-blue-400 font-bold">{user?.email?.split('@')[0]}</span></p>
+        {/* Boas-vindas */}
+        <p className="text-slate-400 text-sm">Bem-vindo, <span className="text-blue-400 font-bold">{user?.email?.split('@')[0]}</span></p>
       </div>
 
       {/* --- CONTEÚDO (AGENDA) --- */}
@@ -130,7 +133,6 @@ export default function HomePage() {
       </main>
 
       {/* --- BOTÃO FLUTUANTE (FAB) --- */}
-      {/* Posicionado mais acima (bottom-24) para não bater no menu */}
       <button 
         onClick={handleNewService}
         disabled={creating}
