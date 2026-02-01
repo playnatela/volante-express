@@ -35,17 +35,15 @@ export default function HomePage() {
   async function fetchData(userId) {
     const today = new Date().toISOString().slice(0, 10);
 
-    // 1. Busca Agendamentos Pendentes (Designados pelo Admin)
     const { data: apps } = await supabase
       .from('appointments')
       .select('*')
       .eq('user_id', userId)
-      .eq('status', 'agendado') // Status inicial
+      .eq('status', 'agendado')
       .order('date', { ascending: true });
     
     setAppointments(apps || []);
 
-    // 2. Calcula Ganho de Hoje (Motivação!)
     const { data: doneToday } = await supabase
       .from('appointments')
       .select('commission_amount')
@@ -60,30 +58,32 @@ export default function HomePage() {
   }
 
   const handleNewService = async () => {
-    // Cria um serviço "em branco" e joga pro formulário
     const model = prompt("Qual o modelo do veículo?");
     if (!model) return;
 
     setCreating(true);
     const { data: { user } } = await supabase.auth.getUser();
     
-    // Pega a região do perfil do usuário para vincular o estoque certo
+    // Busca região
     const { data: profile } = await supabase.from('profiles').select('region_id').eq('id', user.id).single();
 
+    // Tenta criar o serviço
     const { data, error } = await supabase.from('appointments').insert([{
         user_id: user.id,
         vehicle_model: model,
-        customer_name: 'Cliente Avulso', // Pode editar depois se quiser
-        status: 'em_andamento',
+        customer_name: 'Cliente Avulso',
+        status: 'agendado', // Mudei para 'agendado' para evitar travar se 'em_andamento' nao existir
         date: new Date().toISOString(),
-        region_id: profile?.region_id || 'divinopolis' // Fallback
+        region_id: profile?.region_id || 'divinopolis'
     }]).select().single();
 
-    if (data) {
-        router.push(`/atendimento/${data.id}`);
-    } else {
-        alert('Erro ao criar serviço.');
+    if (error) {
+        // AQUI ESTÁ A CORREÇÃO: Mostra o erro real
+        alert('Erro detalhado: ' + error.message);
+        console.error(error);
         setCreating(false);
+    } else {
+        router.push(`/atendimento/${data.id}`);
     }
   };
 
@@ -114,7 +114,7 @@ export default function HomePage() {
             </button>
         </div>
 
-        {/* Card Ganho Hoje (Link pro Extrato) */}
+        {/* Card Ganho Hoje */}
         <div onClick={() => router.push('/extrato')} className="bg-gradient-to-r from-emerald-600 to-emerald-800 p-5 rounded-2xl shadow-lg relative overflow-hidden cursor-pointer active:scale-95 transition-transform">
             <div className="relative z-10 flex justify-between items-center">
                 <div>
@@ -125,7 +125,6 @@ export default function HomePage() {
                     <ChevronRight className="text-white" size={20}/>
                 </div>
             </div>
-            {/* Efeito de fundo */}
             <div className="absolute -right-6 -bottom-10 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
         </div>
       </div>
@@ -167,7 +166,7 @@ export default function HomePage() {
 
       </main>
 
-      {/* Botão Flutuante (FAB) - Novo Serviço */}
+      {/* Botão Flutuante (FAB) */}
       <button 
         onClick={handleNewService}
         disabled={creating}
