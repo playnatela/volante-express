@@ -2,8 +2,10 @@
 import { useEffect, useState, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
-import { TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, Star, Package, Plus, Save } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, Star, Package, Plus, Save, Eye, X, PieChart as PieIcon, BarChart3 } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
 export default function AdminPage() {
   const router = useRouter();
@@ -35,6 +37,9 @@ export default function AdminPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [isEditingInv, setIsEditingInv] = useState(null);
   const [editInvForm, setEditInvForm] = useState({});
+
+  // MODAL DE DETALHES (Restaurado)
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
 
   useEffect(() => { loadRegions(); }, []);
   useEffect(() => { if (selectedRegion) fetchData(); }, [selectedRegion, activeTab]);
@@ -73,20 +78,16 @@ export default function AdminPage() {
     setLoading(false);
   }
 
-  // --- AÇÕES CONFIGURAÇÕES ---
+  // --- AÇÕES ---
   async function handleAddAccount(e) {
     e.preventDefault();
     const regionToSave = newAccount.type === 'banco' ? null : selectedRegion;
     const { error } = await supabase.from('accounts').insert([{ ...newAccount, region_id: regionToSave, balance: 0 }]);
-    if (!error) { 
-        setNewAccount({ name: '', type: 'banco' }); 
-        fetchData(); 
-        alert('Conta criada com sucesso!');
-    }
+    if (!error) { setNewAccount({ name: '', type: 'banco' }); fetchData(); alert('Conta criada!'); }
   }
 
   async function handleDeleteAccount(id) {
-    if(!confirm('Tem certeza? Se houver movimentações, isso causará erro.')) return;
+    if(!confirm('Tem certeza?')) return;
     await supabase.from('accounts').delete().eq('id', id);
     fetchData();
   }
@@ -103,22 +104,18 @@ export default function AdminPage() {
     fetchData();
   }
 
-  // --- AÇÕES FINANCEIRO ---
   async function handleAddExpense(e) {
     e.preventDefault();
     if (!newExpense.account_id) return alert('Selecione a conta!');
     const { error } = await supabase.from('expenses').insert([{ ...newExpense, region_id: selectedRegion, date: new Date().toISOString() }]);
     if (!error) {
         const acc = accounts.find(a => a.id === newExpense.account_id);
-        if(acc) {
-            await supabase.from('accounts').update({ balance: acc.balance - Number(newExpense.amount) }).eq('id', newExpense.account_id);
-        }
+        if(acc) await supabase.from('accounts').update({ balance: acc.balance - Number(newExpense.amount) }).eq('id', newExpense.account_id);
         setNewExpense({ description: '', amount: '', category: 'Operacional', account_id: '' });
         fetchData();
     }
   }
 
-  // --- AÇÕES ESTOQUE ---
   async function handleAddInventory(e) {
     e.preventDefault();
     await supabase.from('inventory').insert([{ ...newItem, region_id: selectedRegion }]);
@@ -132,32 +129,90 @@ export default function AdminPage() {
     fetchData();
   }
 
-  // Cálculos Dashboard
+  // --- CÁLCULOS E GRÁFICOS (RESTAURADOS) ---
   const filteredData = useMemo(() => {
-    // Filtra pelo mês selecionado
     const apps = appointments.filter(a => (a.completed_at || a.created_at).startsWith(selectedMonth));
     const exps = expenses.filter(e => (e.date || e.created_at).startsWith(selectedMonth));
     return { apps, exps };
   }, [appointments, expenses, selectedMonth]);
 
   const dashboardStats = useMemo(() => {
-    // CORREÇÃO: Soma gross_amount (novo) ou amount (antigo)
     const totalIncome = filteredData.apps.reduce((acc, curr) => acc + (Number(curr.gross_amount) || Number(curr.amount) || 0), 0);
-    // Para lucro líquido, o ideal é usar net_amount (já descontado taxa), mas vamos manter simples por enquanto:
     const totalNetIncome = filteredData.apps.reduce((acc, curr) => acc + (Number(curr.net_amount) || Number(curr.amount) || 0), 0);
-    
     const totalExpense = filteredData.exps.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-    
-    // Lucro Líquido = (Receita Líquida das Vendas) - Despesas
+
+    // 1. Gráfico de Pagamentos
+    const paymentsMap = {};
+    filteredData.apps.forEach(a => {
+        const method = a.payment_method || 'outros';
+        const val = Number(a.gross_amount) || Number(a.amount) || 0;
+        paymentsMap[method] = (paymentsMap[method] || 0) + val;
+    });
+    const paymentChartData = Object.keys(paymentsMap).map(k => ({ name: k, value: paymentsMap[k] }));
+
+    // 2. Gráfico de Materiais
+    const materialsMap = {};
+    filteredData.apps.forEach(a => {
+        if(a.material_used_id) {
+            const matName = inventory.find(i => i.id === a.material_used_id)?.name || 'Desconhecido';
+            materialsMap[matName] = (materialsMap[matName] || 0) + 1;
+        }
+    });
+    const materialsChartData = Object.keys(materialsMap).map(k => ({ name: k, value: materialsMap[k] }));
+
     return { 
         totalIncome, 
         totalExpense, 
-        profit: totalNetIncome - totalExpense 
+        profit: totalNetIncome - totalExpense,
+        paymentChartData,
+        materialsChartData
     };
-  }, [filteredData]);
+  }, [filteredData, inventory]);
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 md:p-8 font-sans text-slate-800">
+    <div className="min-h-screen bg-gray-100 p-4 md:p-8 font-sans text-slate-800 relative">
+      
+      {/* --- MODAL / POP-UP (RESTAURADO) --- */}
+      {selectedTransaction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
+                    <h3 className="font-bold text-lg">Detalhes do Serviço</h3>
+                    <button onClick={() => setSelectedTransaction(null)} className="p-2 hover:bg-slate-700 rounded-full"><X size={20}/></button>
+                </div>
+                <div className="overflow-y-auto p-6 space-y-6">
+                    {/* FOTO */}
+                    {selectedTransaction.photo_url ? (
+                        <div className="rounded-xl overflow-hidden border border-gray-200 bg-black flex justify-center">
+                            <img src={selectedTransaction.photo_url} alt="Comprovante" className="max-w-full h-auto max-h-[50vh] object-contain" />
+                        </div>
+                    ) : <div className="h-32 bg-gray-100 rounded-xl flex items-center justify-center text-gray-400">Sem foto disponível</div>}
+                    
+                    {/* DADOS */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <label className="text-xs font-bold text-gray-500 uppercase">Cliente / Veículo</label>
+                            <p className="font-bold text-lg text-slate-800">{selectedTransaction.vehicle_model} <span className="text-sm font-normal">({selectedTransaction.customer_name})</span></p>
+                        </div>
+                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                             <label className="text-xs font-bold text-gray-500 uppercase">Financeiro</label>
+                             <div className="flex flex-col">
+                                <span className="font-bold text-lg text-green-700">R$ {Number(selectedTransaction.gross_amount || selectedTransaction.amount).toFixed(2)}</span>
+                                <span className="text-xs text-slate-500 capitalize">{selectedTransaction.payment_method} {selectedTransaction.installments > 1 ? `(${selectedTransaction.installments}x)` : ''}</span>
+                                {selectedTransaction.net_amount && (
+                                    <span className="text-xs text-slate-400 mt-1">Líquido: R$ {Number(selectedTransaction.net_amount).toFixed(2)}</span>
+                                )}
+                             </div>
+                        </div>
+                    </div>
+                </div>
+                <div className="p-4 border-t border-gray-100 bg-gray-50 text-right">
+                    <button onClick={() => setSelectedTransaction(null)} className="px-6 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800">Fechar</button>
+                </div>
+            </div>
+        </div>
+      )}
+
       <div className="max-w-6xl mx-auto space-y-6">
         
         {/* Header */}
@@ -207,29 +262,52 @@ export default function AdminPage() {
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                         <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Banknote size={20}/> Saldos Atuais</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                            {accounts.filter(a => a.type === 'banco').map(acc => (
-                                <div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-400' : 'bg-blue-50 border-blue-200'}`}>
+                            {accounts.map(acc => (
+                                <div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-400' : 'bg-gray-50 border-gray-200'}`}>
                                     <p className="text-xs font-bold uppercase text-slate-500 mb-1 flex justify-between">
-                                        Banco Global {acc.is_default && '⭐'}
-                                        <span className="text-blue-600">🏢</span>
+                                        {acc.type === 'banco' ? 'Banco Global' : 'Caixa Regional'} {acc.is_default && '⭐'}
                                     </p>
-                                    <p className="font-bold text-lg text-slate-800">{acc.name}</p>
-                                    <p className="text-2xl font-bold mt-2 text-slate-900">R$ {Number(acc.balance).toFixed(2)}</p>
-                                </div>
-                            ))}
-                            {accounts.filter(a => a.type === 'carteira').map(acc => (
-                                <div key={acc.id} className="p-4 rounded-xl border bg-yellow-50 border-yellow-200">
-                                    <p className="text-xs font-bold uppercase text-slate-500 mb-1 flex justify-between">Caixa {selectedRegion} <span className="text-yellow-600">💰</span></p>
                                     <p className="font-bold text-lg text-slate-800">{acc.name}</p>
                                     <p className="text-2xl font-bold mt-2 text-slate-900">R$ {Number(acc.balance).toFixed(2)}</p>
                                 </div>
                             ))}
                         </div>
                     </div>
+
+                    {/* GRÁFICOS RESTAURADOS */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+                             <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><BarChart3 size={16}/> Receita por Pagamento</h4>
+                             <ResponsiveContainer width="100%" height="90%">
+                                <BarChart data={dashboardStats.paymentChartData} layout="vertical">
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
+                                    <XAxis type="number" hide />
+                                    <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 12, textTransform: 'capitalize'}} />
+                                    <Tooltip contentStyle={{borderRadius: '8px'}} cursor={{fill: '#f8fafc'}} />
+                                    <Bar dataKey="value" fill="#16a34a" radius={[0, 4, 4, 0]} barSize={20}>
+                                        {dashboardStats.paymentChartData.map((e, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                    </Bar>
+                                </BarChart>
+                             </ResponsiveContainer>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+                             <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><PieIcon size={16}/> Materiais Mais Usados</h4>
+                             <ResponsiveContainer width="100%" height="90%">
+                                <PieChart>
+                                    <Pie data={dashboardStats.materialsChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
+                                        {dashboardStats.materialsChartData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip />
+                                    <Legend />
+                                </PieChart>
+                             </ResponsiveContainer>
+                        </div>
+                    </div>
                 </div>
             )}
 
-            {/* FINANCEIRO */}
             {activeTab === 'financeiro' && (
                 <div className="space-y-6 animate-in fade-in">
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -248,23 +326,24 @@ export default function AdminPage() {
                     </div>
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                         <table className="w-full text-sm">
-                             {/* CORREÇÃO: Cabeçalho "Descrição" */}
-                             <thead className="bg-gray-50 text-slate-500 font-medium"><tr><th className="p-4 text-left">Data</th><th className="p-4 text-left">Descrição</th><th className="p-4 text-right">Valor</th></tr></thead>
+                             <thead className="bg-gray-50 text-slate-500 font-medium"><tr><th className="p-4 text-left">Data</th><th className="p-4 text-left">Descrição</th><th className="p-4 text-right">Valor</th><th className="p-4 text-center">Ver</th></tr></thead>
                              <tbody className="divide-y divide-gray-100">
                                 {[...filteredData.apps.map(a => ({
-                                    date: a.completed_at || a.created_at, // Pega a data de conclusão real
-                                    // CORREÇÃO: Formato "Carro - Cliente"
-                                    desc: `${a.vehicle_model} - ${a.customer_name}`, 
-                                    // CORREÇÃO: Pega o gross_amount (novo) ou amount (antigo)
-                                    val: a.gross_amount || a.amount, 
+                                    ...a,
+                                    date: a.completed_at || a.created_at, 
+                                    desc: `${a.vehicle_model || 'Veículo'} - ${a.customer_name || 'Cliente'}`, 
+                                    val: Number(a.gross_amount) > 0 ? a.gross_amount : a.amount, 
                                     type: 'in'
                                   })), 
-                                  ...filteredData.exps.map(e => ({date: e.date, desc: `Despesa: ${e.description}`, val: e.amount, type: 'out'}))]
+                                  ...filteredData.exps.map(e => ({...e, date: e.date, desc: `Despesa: ${e.description}`, val: e.amount, type: 'out'}))]
                                   .sort((a,b) => new Date(b.date) - new Date(a.date)).map((t, i) => (
-                                    <tr key={i}>
+                                    <tr key={i} className="hover:bg-gray-50 transition-colors">
                                         <td className="p-4 text-slate-500">{new Date(t.date).toLocaleDateString()}</td>
                                         <td className="p-4 font-bold text-slate-700 capitalize">{t.desc}</td>
                                         <td className={`p-4 text-right font-bold ${t.type === 'in' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'in' ? '+' : '-'} R$ {Number(t.val).toFixed(2)}</td>
+                                        <td className="p-4 text-center">
+                                            {t.type === 'in' && <button onClick={() => setSelectedTransaction(t)} className="text-blue-500 hover:text-blue-700"><Eye size={18}/></button>}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -273,46 +352,29 @@ export default function AdminPage() {
                 </div>
             )}
 
-            {/* ESTOQUE */}
             {activeTab === 'estoque' && (
                 <div className="space-y-6 animate-in fade-in">
                     <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                         <div>
-                            <h3 className="font-bold text-slate-700 flex items-center gap-2"><Package size={20}/> Inventário: {selectedRegion}</h3>
-                            <p className="text-xs text-slate-500">Gerencie os materiais desta regional.</p>
-                         </div>
+                         <div><h3 className="font-bold text-slate-700 flex items-center gap-2"><Package size={20}/> Inventário: {selectedRegion}</h3></div>
                          <button onClick={() => setShowAddForm(!showAddForm)} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-500"><Plus size={18}/> Novo Item</button>
                     </div>
-                    
                     {showAddForm && (
                         <form onSubmit={handleAddInventory} className="bg-blue-50 p-6 rounded-2xl grid grid-cols-4 gap-4 items-end border border-blue-100">
-                            <div className="col-span-2"><label className="text-xs font-bold text-slate-500">Nome do Material</label><input className="w-full p-3 border rounded-xl" placeholder="Ex: Capa Lisa Preta" required value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /></div>
-                            <div><label className="text-xs font-bold text-slate-500">Quantidade</label><input className="w-full p-3 border rounded-xl" type="number" required value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} /></div>
+                            <div className="col-span-2"><label className="text-xs font-bold text-slate-500">Nome</label><input className="w-full p-3 border rounded-xl" required value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /></div>
+                            <div><label className="text-xs font-bold text-slate-500">Qtd</label><input className="w-full p-3 border rounded-xl" type="number" required value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} /></div>
                             <button className="bg-green-600 text-white p-3 rounded-xl font-bold hover:bg-green-500">Salvar</button>
                         </form>
                     )}
-                    
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {inventory.map(item => (
                             <div key={item.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center relative overflow-hidden">
                                 {item.quantity <= item.min_threshold && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500"></div>}
-                                <div>
-                                    <h4 className="font-bold text-slate-800 text-lg">{item.name}</h4>
-                                    <span className={`text-xs px-2 py-1 rounded-md font-bold ${item.quantity <= item.min_threshold ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-slate-500'}`}>
-                                        {item.quantity <= item.min_threshold ? 'Estoque Baixo' : 'Normal'}
-                                    </span>
-                                </div>
+                                <div><h4 className="font-bold text-slate-800 text-lg">{item.name}</h4><span className={`text-xs px-2 py-1 rounded-md font-bold ${item.quantity <= item.min_threshold ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-slate-500'}`}>{item.quantity <= item.min_threshold ? 'Estoque Baixo' : 'Normal'}</span></div>
                                 <div className="text-right">
                                     {isEditingInv === item.id ? (
-                                        <div className="flex items-center gap-2">
-                                            <input className="w-16 p-2 border rounded-lg text-center font-bold" type="number" value={editInvForm.quantity} onChange={e => setEditInvForm({...editInvForm, quantity: e.target.value})} />
-                                            <button onClick={() => handleUpdateInventory(item.id)} className="bg-green-100 text-green-700 p-2 rounded-lg hover:bg-green-200"><Save size={18}/></button>
-                                        </div>
+                                        <div className="flex items-center gap-2"><input className="w-16 p-2 border rounded-lg text-center font-bold" type="number" value={editInvForm.quantity} onChange={e => setEditInvForm({...editInvForm, quantity: e.target.value})} /><button onClick={() => handleUpdateInventory(item.id)} className="bg-green-100 text-green-700 p-2 rounded-lg"><Save size={18}/></button></div>
                                     ) : (
-                                        <div className="flex flex-col items-end gap-1">
-                                            <span className="text-3xl font-bold text-slate-800">{item.quantity}</span>
-                                            <button onClick={() => { setIsEditingInv(item.id); setEditInvForm(item); }} className="text-xs text-blue-600 hover:underline font-bold">Ajustar</button>
-                                        </div>
+                                        <div className="flex flex-col items-end gap-1"><span className="text-3xl font-bold text-slate-800">{item.quantity}</span><button onClick={() => { setIsEditingInv(item.id); setEditInvForm(item); }} className="text-xs text-blue-600 hover:underline font-bold">Ajustar</button></div>
                                     )}
                                 </div>
                             </div>
@@ -321,7 +383,6 @@ export default function AdminPage() {
                 </div>
             )}
 
-            {/* CONFIGURAÇÕES */}
             {activeTab === 'configuracoes' && (
                 <div className="space-y-8 animate-in fade-in">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -331,21 +392,9 @@ export default function AdminPage() {
                                 {accounts.map(acc => (
                                     <div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}>
                                         <div className="flex items-center gap-3">
-                                            {acc.type === 'banco' && (
-                                                <button 
-                                                    onClick={() => handleSetDefault(acc.id)}
-                                                    className={`p-1 rounded-full transition-colors ${acc.is_default ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}
-                                                >
-                                                    <Star size={20} fill={acc.is_default ? "currentColor" : "none"} />
-                                                </button>
-                                            )}
+                                            {acc.type === 'banco' && (<button onClick={() => handleSetDefault(acc.id)} className={`p-1 rounded-full transition-colors ${acc.is_default ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}><Star size={20} fill={acc.is_default ? "currentColor" : "none"} /></button>)}
                                             {acc.type === 'carteira' && <div className="w-5"></div>}
-                                            <div>
-                                                <p className={`font-bold ${acc.is_default ? 'text-blue-700' : 'text-slate-800'}`}>
-                                                    {acc.name} {acc.is_default && <span className="text-xs bg-blue-200 text-blue-800 px-1 rounded ml-1">PADRÃO</span>}
-                                                </p>
-                                                <p className="text-xs text-slate-500">{acc.type === 'banco' ? 'Global (Todas Regionais)' : `Regional (${selectedRegion})`}</p>
-                                            </div>
+                                            <div><p className={`font-bold ${acc.is_default ? 'text-blue-700' : 'text-slate-800'}`}>{acc.name} {acc.is_default && <span className="text-xs bg-blue-200 text-blue-800 px-1 rounded ml-1">PADRÃO</span>}</p><p className="text-xs text-slate-500">{acc.type === 'banco' ? 'Global' : `Regional (${selectedRegion})`}</p></div>
                                         </div>
                                         <button onClick={() => handleDeleteAccount(acc.id)} className="text-red-400 p-2 hover:bg-red-50 rounded"><Trash2 size={16}/></button>
                                     </div>
@@ -359,21 +408,14 @@ export default function AdminPage() {
                                 <div><label className="text-xs font-bold text-slate-500">Nome</label><input className="w-full p-3 border rounded-xl" required value={newAccount.name} onChange={e => setNewAccount({...newAccount, name: e.target.value})} placeholder="Ex: Nubank ou Caixa Loja" /></div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-500">Tipo</label>
-                                    <select className="w-full p-3 border rounded-xl" value={newAccount.type} onChange={e => setNewAccount({...newAccount, type: e.target.value})}>
-                                        <option value="banco">Banco (Global/Único)</option>
-                                        <option value="carteira">Carteira (Dinheiro desta Região)</option>
-                                    </select>
-                                    <p className="text-xs text-slate-400 mt-1">
-                                        {newAccount.type === 'banco' ? 'Visível para todas as cidades.' : `Visível apenas para ${selectedRegion}.`}
-                                    </p>
+                                    <select className="w-full p-3 border rounded-xl" value={newAccount.type} onChange={e => setNewAccount({...newAccount, type: e.target.value})}><option value="banco">Banco (Global)</option><option value="carteira">Carteira (Regional)</option></select>
                                 </div>
                                 <button className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500">Criar</button>
                             </form>
                         </div>
                     </div>
-
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                        <h4 className="font-bold text-slate-800 mb-4">Taxas de Maquininha (Globais)</h4>
+                        <h4 className="font-bold text-slate-800 mb-4">Taxas de Maquininha</h4>
                         <table className="w-full text-sm">
                             <tbody className="divide-y divide-gray-100">
                                 {rates.map(rate => (
