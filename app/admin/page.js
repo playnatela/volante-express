@@ -91,11 +91,8 @@ export default function AdminPage() {
     fetchData();
   }
 
-  // Define conta padrão
   async function handleSetDefault(accountId) {
-    // 1. Remove padrão de todas as contas globais (bancos)
     await supabase.from('accounts').update({ is_default: false }).is('region_id', null);
-    // 2. Define a nova padrão
     await supabase.from('accounts').update({ is_default: true }).eq('id', accountId);
     fetchData();
   }
@@ -137,15 +134,26 @@ export default function AdminPage() {
 
   // Cálculos Dashboard
   const filteredData = useMemo(() => {
+    // Filtra pelo mês selecionado
     const apps = appointments.filter(a => (a.completed_at || a.created_at).startsWith(selectedMonth));
     const exps = expenses.filter(e => (e.date || e.created_at).startsWith(selectedMonth));
     return { apps, exps };
   }, [appointments, expenses, selectedMonth]);
 
   const dashboardStats = useMemo(() => {
-    const totalIncome = filteredData.apps.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+    // CORREÇÃO: Soma gross_amount (novo) ou amount (antigo)
+    const totalIncome = filteredData.apps.reduce((acc, curr) => acc + (Number(curr.gross_amount) || Number(curr.amount) || 0), 0);
+    // Para lucro líquido, o ideal é usar net_amount (já descontado taxa), mas vamos manter simples por enquanto:
+    const totalNetIncome = filteredData.apps.reduce((acc, curr) => acc + (Number(curr.net_amount) || Number(curr.amount) || 0), 0);
+    
     const totalExpense = filteredData.exps.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-    return { totalIncome, totalExpense, profit: totalIncome - totalExpense };
+    
+    // Lucro Líquido = (Receita Líquida das Vendas) - Despesas
+    return { 
+        totalIncome, 
+        totalExpense, 
+        profit: totalNetIncome - totalExpense 
+    };
   }, [filteredData]);
 
   return (
@@ -190,7 +198,10 @@ export default function AdminPage() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-slate-500">Receita ({selectedRegion})</p><h3 className="text-3xl font-bold text-green-600">R$ {dashboardStats.totalIncome.toFixed(2)}</h3></div>
                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-slate-500">Despesas ({selectedRegion})</p><h3 className="text-3xl font-bold text-red-600">R$ {dashboardStats.totalExpense.toFixed(2)}</h3></div>
-                        <div className="bg-slate-900 p-6 rounded-2xl shadow-lg text-white"><p className="text-slate-400">Lucro Líquido</p><h3 className="text-3xl font-bold">R$ {dashboardStats.profit.toFixed(2)}</h3></div>
+                        <div className="bg-slate-900 p-6 rounded-2xl shadow-lg text-white">
+                            <p className="text-slate-400 flex items-center justify-between">Lucro Líquido <span className="text-xs bg-slate-800 px-2 rounded">Após Taxas</span></p>
+                            <h3 className="text-3xl font-bold">R$ {dashboardStats.profit.toFixed(2)}</h3>
+                        </div>
                     </div>
 
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -237,14 +248,22 @@ export default function AdminPage() {
                     </div>
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                         <table className="w-full text-sm">
-                             <thead className="bg-gray-50 text-slate-500 font-medium"><tr><th className="p-4 text-left">Data</th><th className="p-4 text-left">Desc</th><th className="p-4 text-right">Valor</th></tr></thead>
+                             {/* CORREÇÃO: Cabeçalho "Descrição" */}
+                             <thead className="bg-gray-50 text-slate-500 font-medium"><tr><th className="p-4 text-left">Data</th><th className="p-4 text-left">Descrição</th><th className="p-4 text-right">Valor</th></tr></thead>
                              <tbody className="divide-y divide-gray-100">
-                                {[...filteredData.apps.map(a => ({date: a.created_at, desc: `Receita: ${a.vehicle_model}`, val: a.amount, type: 'in'})), 
+                                {[...filteredData.apps.map(a => ({
+                                    date: a.completed_at || a.created_at, // Pega a data de conclusão real
+                                    // CORREÇÃO: Formato "Carro - Cliente"
+                                    desc: `${a.vehicle_model} - ${a.customer_name}`, 
+                                    // CORREÇÃO: Pega o gross_amount (novo) ou amount (antigo)
+                                    val: a.gross_amount || a.amount, 
+                                    type: 'in'
+                                  })), 
                                   ...filteredData.exps.map(e => ({date: e.date, desc: `Despesa: ${e.description}`, val: e.amount, type: 'out'}))]
                                   .sort((a,b) => new Date(b.date) - new Date(a.date)).map((t, i) => (
                                     <tr key={i}>
                                         <td className="p-4 text-slate-500">{new Date(t.date).toLocaleDateString()}</td>
-                                        <td className="p-4 font-bold text-slate-700">{t.desc}</td>
+                                        <td className="p-4 font-bold text-slate-700 capitalize">{t.desc}</td>
                                         <td className={`p-4 text-right font-bold ${t.type === 'in' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'in' ? '+' : '-'} R$ {Number(t.val).toFixed(2)}</td>
                                     </tr>
                                 ))}
@@ -298,7 +317,6 @@ export default function AdminPage() {
                                 </div>
                             </div>
                         ))}
-                        {inventory.length === 0 && <p className="col-span-full text-center py-10 text-slate-400">Nenhum item cadastrado nesta região.</p>}
                     </div>
                 </div>
             )}
@@ -313,18 +331,15 @@ export default function AdminPage() {
                                 {accounts.map(acc => (
                                     <div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}>
                                         <div className="flex items-center gap-3">
-                                            {/* CHECKBOX CORRIGIDO */}
                                             {acc.type === 'banco' && (
                                                 <button 
                                                     onClick={() => handleSetDefault(acc.id)}
                                                     className={`p-1 rounded-full transition-colors ${acc.is_default ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}
-                                                    title="Definir como conta padrão para recebimentos"
                                                 >
                                                     <Star size={20} fill={acc.is_default ? "currentColor" : "none"} />
                                                 </button>
                                             )}
                                             {acc.type === 'carteira' && <div className="w-5"></div>}
-
                                             <div>
                                                 <p className={`font-bold ${acc.is_default ? 'text-blue-700' : 'text-slate-800'}`}>
                                                     {acc.name} {acc.is_default && <span className="text-xs bg-blue-200 text-blue-800 px-1 rounded ml-1">PADRÃO</span>}
