@@ -1,139 +1,181 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Phone, Clock, Car, ChevronRight, LogOut, MapPin, CalendarDays } from 'lucide-react';
-import { format, parseISO, isToday } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+import { LogOut, Plus, Wallet, Car, MapPin, Calendar, ChevronRight, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
+  const router = useRouter();
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
+
+  const [user, setUser] = useState(null);
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [userProfile, setUserProfile] = useState(null);
-  const router = useRouter();
-
-  useEffect(() => { checkUser(); }, []);
+  const [creating, setCreating] = useState(false);
+  const [todayCommission, setTodayCommission] = useState(0);
 
   useEffect(() => {
-    if (!userProfile?.region_id) return;
-    const channel = supabase.channel('realtime_appointments')
-      .on('postgres_changes', { 
-        event: '*', schema: 'public', table: 'appointments',
-        filter: `region_id=eq.${userProfile.region_id}`
-      }, () => fetchAppointments(userProfile.region_id))
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [userProfile]);
+    checkUser();
+  }, []);
 
   async function checkUser() {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { router.push('/login'); return; }
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-    setUserProfile(profile);
-    fetchAppointments(profile?.region_id);
+    if (!user) {
+      router.push('/login');
+    } else {
+      setUser(user);
+      fetchData(user.id);
+    }
   }
 
-  async function fetchAppointments(regionId) {
-    if (!regionId) return setLoading(false);
-    const { data } = await supabase.from('appointments').select('*')
-      .eq('status', 'pendente').eq('region_id', regionId).order('appointment_at', { ascending: true });
-    setAppointments(data || []);
+  async function fetchData(userId) {
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 1. Busca Agendamentos Pendentes (Designados pelo Admin)
+    const { data: apps } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'agendado') // Status inicial
+      .order('date', { ascending: true });
+    
+    setAppointments(apps || []);
+
+    // 2. Calcula Ganho de Hoje (Motivação!)
+    const { data: doneToday } = await supabase
+      .from('appointments')
+      .select('commission_amount')
+      .eq('user_id', userId)
+      .eq('status', 'concluido')
+      .like('completed_at', `${today}%`);
+    
+    const totalToday = doneToday?.reduce((acc, curr) => acc + (Number(curr.commission_amount) || 0), 0) || 0;
+    setTodayCommission(totalToday);
+
     setLoading(false);
   }
 
-  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
+  const handleNewService = async () => {
+    // Cria um serviço "em branco" e joga pro formulário
+    const model = prompt("Qual o modelo do veículo?");
+    if (!model) return;
 
-  const formatData = (isoString) => {
-    if (!isoString) return '--:--';
-    const date = parseISO(isoString);
-    return isToday(date) ? `Hoje, ${format(date, 'HH:mm')}` : format(date, "dd/MM 'às' HH:mm", { locale: ptBR });
+    setCreating(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    // Pega a região do perfil do usuário para vincular o estoque certo
+    const { data: profile } = await supabase.from('profiles').select('region_id').eq('id', user.id).single();
+
+    const { data, error } = await supabase.from('appointments').insert([{
+        user_id: user.id,
+        vehicle_model: model,
+        customer_name: 'Cliente Avulso', // Pode editar depois se quiser
+        status: 'em_andamento',
+        date: new Date().toISOString(),
+        region_id: profile?.region_id || 'divinopolis' // Fallback
+    }]).select().single();
+
+    if (data) {
+        router.push(`/atendimento/${data.id}`);
+    } else {
+        alert('Erro ao criar serviço.');
+        setCreating(false);
+    }
   };
 
-  const getWhatsappLink = (phone) => {
-    if (!phone) return '#';
-    const clean = phone.replace(/\D/g, '');
-    const final = clean.startsWith('55') && clean.length > 11 ? clean : `55${clean}`;
-    return `https://wa.me/${final}`;
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/login');
   };
 
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Carregando...</div>;
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white"><Loader2 className="animate-spin"/></div>;
 
   return (
-    <div className="min-h-screen bg-slate-950 pb-20 text-slate-200">
-      <header className="bg-slate-900 border-b border-slate-800 p-5 sticky top-0 z-10 flex justify-between items-center shadow-lg safe-area-top">
-        <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">Volante Express</h1>
-          {/* MUDANÇA 1: Adicionado palavra Regional */}
-          <p className="text-xs text-blue-400 font-medium uppercase tracking-wider flex items-center gap-1">
-            <MapPin size={10} /> Regional {userProfile?.region_id || '...'}
-          </p>
-        </div>
-        <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400"><LogOut size={18} /></button>
-      </header>
-
-      <main className="p-4 max-w-md mx-auto space-y-4 mt-2">
-        {appointments.length === 0 ? (
-          <div className="text-center mt-20 p-8 bg-slate-900 rounded-2xl border border-slate-800 border-dashed">
-            <CalendarDays size={48} className="mx-auto text-slate-700 mb-4"/>
-            <p className="text-slate-400 font-medium">Sem serviços agora.</p>
-          </div>
-        ) : (
-          appointments.map((item) => (
-            <div key={item.id} className="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 overflow-hidden relative">
-              
-              {/* HEADER DO CARD */}
-              <div className="bg-slate-950/50 px-5 py-3 border-b border-slate-800 flex justify-between items-center">
-                {/* Lado Esquerdo: Hora */}
-                <div className="flex items-center gap-2 text-blue-400 text-sm font-semibold">
-                    <Clock size={16} /> {formatData(item.appointment_at)}
+    <div className="min-h-screen bg-slate-950 text-slate-200 pb-24">
+      
+      {/* Header */}
+      <div className="bg-slate-900 p-6 rounded-b-3xl shadow-2xl border-b border-slate-800">
+        <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center font-bold text-white">
+                    {user?.email?.charAt(0).toUpperCase()}
                 </div>
-
-                {/* Lado Direito: Cidade (Pin Vermelho) + Badge Urgente */}
-                <div className="flex items-center gap-3">
-                    {/* Se tiver Nome do Calendário (Cidade), mostra aqui */}
-                    {item.calendar_name && (
-                        <div className="flex items-center gap-1 text-xs font-bold text-slate-300 bg-slate-800/50 px-2 py-1 rounded-md border border-slate-700/50">
-                            <MapPin size={12} className="text-red-500 fill-red-500/20" /> 
-                            {item.calendar_name}
-                        </div>
-                    )}
-
-                    {isToday(parseISO(item.appointment_at)) && (
-                        <span className="bg-green-500/10 text-green-400 text-[10px] px-2 py-0.5 rounded-full uppercase font-bold border border-green-500/20">Hoje</span>
-                    )}
+                <div>
+                    <p className="text-xs text-slate-400">Bem-vindo,</p>
+                    <p className="font-bold text-white leading-none">{user?.email?.split('@')[0]}</p>
                 </div>
-              </div>
-
-              <div className="p-5">
-                <div className="flex justify-between items-start mb-4">
-                  <div><h2 className="text-xl font-bold text-white leading-tight">{item.vehicle_model}</h2><p className="text-slate-500 text-sm mt-1">Ano: {item.vehicle_year}</p></div>
-                  <div className="bg-slate-800 p-3 rounded-xl text-blue-400"><Car size={24} /></div>
-                </div>
-                <div className="mb-4 pb-4 border-b border-slate-800/50">
-                    <p className="text-xs text-slate-500 uppercase font-bold mb-1">Cliente</p>
-                    <p className="text-slate-300 font-medium text-lg">{item.customer_name}</p>
-                </div>
-                <div className="flex gap-3">
-                  {item.customer_phone && (
-                    <a href={getWhatsappLink(item.customer_phone)} target="_blank" className="flex-1 bg-slate-800 hover:bg-slate-700 text-green-500 py-3 rounded-xl flex justify-center items-center gap-2 text-sm font-bold border border-slate-700">
-                      <Phone size={18} /> WhatsApp
-                    </a>
-                  )}
-                  <Link href={`/atendimento/${item.id}`} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl flex justify-center items-center gap-2 text-sm font-bold shadow-lg shadow-blue-900/20">
-                    Iniciar <ChevronRight size={18} />
-                  </Link>
-                </div>
-              </div>
             </div>
-          ))
-        )}
+            <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-xl text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">
+                <LogOut size={20}/>
+            </button>
+        </div>
+
+        {/* Card Ganho Hoje (Link pro Extrato) */}
+        <div onClick={() => router.push('/extrato')} className="bg-gradient-to-r from-emerald-600 to-emerald-800 p-5 rounded-2xl shadow-lg relative overflow-hidden cursor-pointer active:scale-95 transition-transform">
+            <div className="relative z-10 flex justify-between items-center">
+                <div>
+                    <p className="text-emerald-100 text-xs font-medium mb-1 flex items-center gap-1"><Wallet size={14}/> Ganho Hoje</p>
+                    <h2 className="text-3xl font-bold text-white">R$ {todayCommission.toFixed(2)}</h2>
+                </div>
+                <div className="bg-white/20 p-2 rounded-full">
+                    <ChevronRight className="text-white" size={20}/>
+                </div>
+            </div>
+            {/* Efeito de fundo */}
+            <div className="absolute -right-6 -bottom-10 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
+        </div>
+      </div>
+
+      <main className="p-6 space-y-6">
+        
+        {/* Agendamentos */}
+        <div>
+            <h3 className="text-slate-400 text-sm font-bold uppercase mb-4 flex items-center gap-2">
+                <Calendar size={16}/> Agenda / Pendentes
+            </h3>
+            
+            <div className="space-y-3">
+                {appointments.length === 0 && (
+                    <div className="text-center py-8 border border-dashed border-slate-800 rounded-2xl bg-slate-900/50">
+                        <p className="text-slate-500 text-sm">Sua lista está vazia.</p>
+                        <p className="text-slate-600 text-xs mt-1">Toque em "+" para iniciar um serviço.</p>
+                    </div>
+                )}
+
+                {appointments.map(app => (
+                    <div key={app.id} onClick={() => router.push(`/atendimento/${app.id}`)} className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex justify-between items-center active:scale-95 transition-transform cursor-pointer">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-blue-900/30 p-3 rounded-lg text-blue-400">
+                                <Car size={20}/>
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-white">{app.vehicle_model}</h4>
+                                <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                                    <MapPin size={12}/> {app.customer_name}
+                                </p>
+                            </div>
+                        </div>
+                        <ChevronRight className="text-slate-600" size={20}/>
+                    </div>
+                ))}
+            </div>
+        </div>
+
       </main>
+
+      {/* Botão Flutuante (FAB) - Novo Serviço */}
+      <button 
+        onClick={handleNewService}
+        disabled={creating}
+        className="fixed bottom-6 right-6 w-16 h-16 bg-blue-600 hover:bg-blue-500 rounded-full shadow-2xl shadow-blue-900/50 flex items-center justify-center text-white transition-transform active:scale-90 z-30"
+      >
+        {creating ? <Loader2 className="animate-spin"/> : <Plus size={32}/>}
+      </button>
+
     </div>
   );
 }
