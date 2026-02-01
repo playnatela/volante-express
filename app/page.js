@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Phone, Clock, Car, ChevronRight, LogOut, MapPin, CalendarDays, Navigation } from 'lucide-react';
+import { Phone, Clock, Car, ChevronRight, LogOut, MapPin, CalendarDays } from 'lucide-react';
 import { format, parseISO, isToday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -55,11 +55,9 @@ export default function HomePage() {
     return isToday(date) ? `Hoje, ${format(date, 'HH:mm')}` : format(date, "dd/MM 'às' HH:mm", { locale: ptBR });
   };
 
-  // Função inteligente para corrigir o WhatsApp
   const getWhatsappLink = (phone) => {
     if (!phone) return '#';
     const clean = phone.replace(/\D/g, '');
-    // Se começar com 55 e tiver mais de 11 digitos (DDD + 9 digitos = 11), assume que já tem DDI
     const final = clean.startsWith('55') && clean.length > 11 ? clean : `55${clean}`;
     return `https://wa.me/${final}`;
   };
@@ -71,8 +69,9 @@ export default function HomePage() {
       <header className="bg-slate-900 border-b border-slate-800 p-5 sticky top-0 z-10 flex justify-between items-center shadow-lg safe-area-top">
         <div>
           <h1 className="text-xl font-bold text-white tracking-tight">Volante Express</h1>
+          {/* MUDANÇA 1: Adicionado palavra Regional */}
           <p className="text-xs text-blue-400 font-medium uppercase tracking-wider flex items-center gap-1">
-            <MapPin size={10} /> {userProfile?.region_id || '...'}
+            <MapPin size={10} /> Regional {userProfile?.region_id || '...'}
           </p>
         </div>
         <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400"><LogOut size={18} /></button>
@@ -87,9 +86,30 @@ export default function HomePage() {
         ) : (
           appointments.map((item) => (
             <div key={item.id} className="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 overflow-hidden relative">
+              
+              {/* HEADER DO CARD */}
               <div className="bg-slate-950/50 px-5 py-3 border-b border-slate-800 flex justify-between items-center">
-                <div className="flex items-center gap-2 text-blue-400 text-sm font-semibold"><Clock size={16} /> {formatData(item.appointment_at)}</div>
+                {/* Lado Esquerdo: Hora */}
+                <div className="flex items-center gap-2 text-blue-400 text-sm font-semibold">
+                    <Clock size={16} /> {formatData(item.appointment_at)}
+                </div>
+
+                {/* Lado Direito: Cidade (Pin Vermelho) + Badge Urgente */}
+                <div className="flex items-center gap-3">
+                    {/* Se tiver Nome do Calendário (Cidade), mostra aqui */}
+                    {item.calendar_name && (
+                        <div className="flex items-center gap-1 text-xs font-bold text-slate-300 bg-slate-800/50 px-2 py-1 rounded-md border border-slate-700/50">
+                            <MapPin size={12} className="text-red-500 fill-red-500/20" /> 
+                            {item.calendar_name}
+                        </div>
+                    )}
+
+                    {isToday(parseISO(item.appointment_at)) && (
+                        <span className="bg-green-500/10 text-green-400 text-[10px] px-2 py-0.5 rounded-full uppercase font-bold border border-green-500/20">Hoje</span>
+                    )}
+                </div>
               </div>
+
               <div className="p-5">
                 <div className="flex justify-between items-start mb-4">
                   <div><h2 className="text-xl font-bold text-white leading-tight">{item.vehicle_model}</h2><p className="text-slate-500 text-sm mt-1">Ano: {item.vehicle_year}</p></div>

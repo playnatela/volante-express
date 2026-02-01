@@ -10,48 +10,32 @@ export async function POST(request) {
   try {
     const { searchParams } = new URL(request.url);
     const region = searchParams.get('region');
-    const forcedStatus = searchParams.get('status'); // <--- NOVIDADE: Lê status da URL
+    const forcedStatus = searchParams.get('status');
 
-    if (!region) {
-      return NextResponse.json({ error: 'Região não informada.' }, { status: 400 });
-    }
+    if (!region) return NextResponse.json({ error: 'Região não informada.' }, { status: 400 });
 
     const body = await request.json();
     
     // 1. ID ÚNICO
-    const uniqueId = 
-      body.calendar?.appointmentId || 
-      body.appointment?.id || 
-      body.id ||
-      body.contact_id; 
+    const uniqueId = body.calendar?.appointmentId || body.appointment?.id || body.id || body.contact_id; 
+    if (!uniqueId) return NextResponse.json({ error: 'Nenhum ID identificável.' }, { status: 400 });
 
-    if (!uniqueId) {
-      return NextResponse.json({ error: 'Nenhum ID identificável.' }, { status: 400 });
-    }
-
-    // 2. FUSO HORÁRIO (-3h)
+    // 2. FUSO HORÁRIO
     let rawDate = body.calendar?.startTime || body.appointment?.start_time || body.start_time;
     let finalDate = undefined;
-
     if (rawDate) {
       if (!rawDate.includes('Z') && !rawDate.includes('+') && !rawDate.match(/-\d\d:\d\d$/)) {
         finalDate = rawDate + '-03:00';
-      } else {
-        finalDate = rawDate;
-      }
+      } else { finalDate = rawDate; }
     }
 
-    // 3. LÓGICA DE STATUS (QUEM MANDA É A URL AGORA)
+    // 3. STATUS
     let appStatus = 'pendente'; 
-
     if (forcedStatus) {
-        // Se a URL mandar "cancelado", obedece na hora.
         appStatus = forcedStatus;
     } else {
-        // Senão, tenta adivinhar pelo corpo do JSON (padrão antigo)
         const ghlStatus = body.calendar?.appointmentStatus || body.appointment?.status || body.status || 'confirmed';
         const statusLower = ghlStatus.toLowerCase();
-
         if (['cancelled', 'canceled', 'noshow', 'invalid', 'abandoned'].includes(statusLower)) {
             appStatus = 'cancelado';
         } else if (['completed', 'finished', 'executed'].includes(statusLower)) {
@@ -62,6 +46,9 @@ export async function POST(request) {
     // 4. PREPARAR DADOS
     const model = body['Marca e Modelo do Veículo'] || body.contact?.['Marca e Modelo do Veículo'] || body.marca_e_modelo_do_veculo || 'Modelo ñ informado';
     const year = body['Ano do Veículo'] || body.contact?.['Ano do Veículo'] || body.ano_do_veculo || '';
+    
+    // CAPTURA O NOME DA CIDADE (Calendar Name)
+    const calendarName = body.calendar?.calendarName || body.calendar_name || '';
 
     const appointmentData = {
       ghl_id: uniqueId,
@@ -69,26 +56,18 @@ export async function POST(request) {
       customer_phone: body.contact?.phone || body.phone || '',
       vehicle_model: model,
       vehicle_year: year,
-      status: appStatus, // <--- Status definido acima
-      region_id: region
+      status: appStatus,
+      region_id: region,
+      calendar_name: calendarName // <--- CAMPO NOVO
     };
 
-    if (finalDate) {
-      appointmentData.appointment_at = finalDate;
-    }
+    if (finalDate) appointmentData.appointment_at = finalDate;
 
-    const { error } = await supabase
-      .from('appointments')
-      .upsert(appointmentData, { onConflict: 'ghl_id' });
+    const { error } = await supabase.from('appointments').upsert(appointmentData, { onConflict: 'ghl_id' });
 
     if (error) throw error;
 
-    return NextResponse.json({ 
-      message: 'Sincronizado!', 
-      id: uniqueId, 
-      status: appStatus, // <--- Verifique este campo na resposta do GHL
-      forced: !!forcedStatus
-    }, { status: 200 });
+    return NextResponse.json({ message: 'Sincronizado!', id: uniqueId, city: calendarName }, { status: 200 });
 
   } catch (err) {
     console.error('Erro Webhook:', err);
