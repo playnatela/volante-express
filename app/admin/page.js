@@ -2,10 +2,11 @@
 import { useEffect, useState, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
+// CORREÇÃO: Adicionado 'Wallet' que estava faltando
 import { 
   TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, 
   Star, Package, Plus, Save, Eye, X, PieChart as PieIcon, 
-  BarChart3, Users, LayoutDashboard, LogOut, Menu
+  BarChart3, Users, LayoutDashboard, LogOut, Menu, Wallet 
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
@@ -67,7 +68,7 @@ export default function AdminPage() {
     setLoading(false);
   }
 
-  // --- AÇÕES (Mantidas Idênticas) ---
+  // --- AÇÕES ---
   async function handleAddAccount(e) { e.preventDefault(); const regionToSave = newAccount.type === 'banco' ? null : selectedRegion; const { error } = await supabase.from('accounts').insert([{ ...newAccount, region_id: regionToSave, balance: 0 }]); if (!error) { setNewAccount({ name: '', type: 'banco' }); fetchData(); alert('Conta criada!'); } }
   async function handleDeleteAccount(id) { if(!confirm('Tem certeza?')) return; await supabase.from('accounts').delete().eq('id', id); fetchData(); }
   async function handleSetDefault(accountId) { await supabase.from('accounts').update({ is_default: false }).is('region_id', null); await supabase.from('accounts').update({ is_default: true }).eq('id', accountId); fetchData(); }
@@ -107,10 +108,11 @@ export default function AdminPage() {
     return Object.values(report);
   }, [filteredData, installers]);
 
-  // --- COMPONENTE DE MENU LATERAL (DESKTOP) ---
+  // --- COMPONENTE SIDEBAR (DESKTOP) ---
   const Sidebar = () => (
     <aside className="hidden md:flex w-64 flex-col bg-slate-900 text-slate-300 h-screen fixed left-0 top-0 z-50">
         <div className="p-6 flex justify-center border-b border-slate-800">
+            {/* Logo com inversão de cor para ficar branco */}
             <img src="/icon-horizontal.png" alt="Logo" className="h-10 object-contain brightness-0 invert opacity-90" />
         </div>
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
@@ -126,7 +128,7 @@ export default function AdminPage() {
     </aside>
   );
 
-  // --- COMPONENTE DE MENU INFERIOR (MOBILE) ---
+  // --- MENU INFERIOR (MOBILE) ---
   const BottomNav = () => (
     <div className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 z-50 px-6 py-2 flex justify-between items-center safe-area-bottom">
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 p-2 ${activeTab === 'dashboard' ? 'text-blue-500' : 'text-slate-500'}`}><LayoutDashboard size={22}/><span className="text-[10px] font-medium">Dash</span></button>
@@ -140,37 +142,37 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-slate-800 flex">
       
-      {/* Sidebar Desktop */}
       <Sidebar />
 
-      {/* Área Principal */}
       <div className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden">
         
-        {/* Header Superior (Filtros) */}
-        <div className="bg-white border-b border-gray-200 p-4 md:p-6 flex flex-col md:flex-row justify-between items-center gap-4 shadow-sm z-40 relative">
+        {/* HEADER ESCURO (Para combinar com menu mobile) */}
+        <div className="bg-slate-900 border-b border-slate-800 p-4 md:p-6 flex flex-col md:flex-row justify-between items-center gap-4 shadow-sm z-40 relative text-white">
             <div className="md:hidden w-full flex justify-center mb-2">
-                <img src="/icon-horizontal.png" alt="Logo" className="h-8 object-contain" />
+                {/* Logo Branco no Mobile */}
+                <img src="/icon-horizontal.png" alt="Logo" className="h-8 object-contain brightness-0 invert" />
             </div>
             <div>
-                <h1 className="text-2xl font-bold text-slate-900 tracking-tight hidden md:block">Painel Administrativo</h1>
-                <p className="text-slate-500 text-sm hidden md:block">Visão Geral da Operação</p>
+                <h1 className="text-2xl font-bold text-white tracking-tight hidden md:block">Painel Administrativo</h1>
+                <p className="text-slate-400 text-sm hidden md:block">Visão Geral da Operação</p>
             </div>
             <div className="flex w-full md:w-auto gap-3">
-                <div className="flex-1 md:flex-none flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-xl border border-gray-200">
+                {/* Seletores Escuros */}
+                <div className="flex-1 md:flex-none flex items-center gap-2 bg-slate-800 px-3 py-2 rounded-xl border border-slate-700">
                     <Calendar size={18} className="text-slate-400"/>
-                    <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-transparent font-bold text-slate-700 outline-none cursor-pointer w-full"/>
+                    <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-transparent font-bold text-slate-200 outline-none cursor-pointer w-full filter invert-0"/>
                 </div>
-                <div className="flex-1 md:flex-none flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-xl border border-gray-200">
+                <div className="flex-1 md:flex-none flex items-center gap-2 bg-slate-800 px-3 py-2 rounded-xl border border-slate-700">
                     <Filter size={18} className="text-slate-400"/>
-                    <select value={selectedRegion} onChange={e => setSelectedRegion(e.target.value)} className="bg-transparent font-bold text-slate-700 outline-none cursor-pointer w-full uppercase">
-                        {regions.map(r => <option key={r.slug} value={r.slug}>{r.name}</option>)}
+                    <select value={selectedRegion} onChange={e => setSelectedRegion(e.target.value)} className="bg-transparent font-bold text-slate-200 outline-none cursor-pointer w-full uppercase">
+                        {regions.map(r => <option key={r.slug} value={r.slug} className="text-black">{r.name}</option>)}
                     </select>
                 </div>
             </div>
         </div>
 
-        {/* Conteúdo com Scroll */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
+        {/* Conteúdo Principal */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8 bg-gray-100">
             {loading ? <div className="h-full flex items-center justify-center text-slate-400">Carregando dados...</div> : (
                 <div className="max-w-6xl mx-auto animate-in fade-in space-y-6">
                     
@@ -326,6 +328,7 @@ export default function AdminPage() {
                                                 <div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border transition-all ${acc.is_default ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
                                                     <div className="flex items-center gap-3">
                                                         {acc.type === 'banco' && (<button onClick={() => handleSetDefault(acc.id)} className={`p-1.5 rounded-full transition-colors ${acc.is_default ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-400 hover:text-yellow-500'}`}><Star size={16} fill={acc.is_default ? "currentColor" : "none"} /></button>)}
+                                                        {/* Correção: Uso do componente Wallet que causava erro */}
                                                         {acc.type === 'carteira' && <div className="w-7 h-7 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600"><Wallet size={14}/></div>}
                                                         <div><p className={`font-bold text-sm ${acc.is_default ? 'text-blue-800' : 'text-slate-700'}`}>{acc.name} {acc.is_default && <span className="text-[10px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded ml-1 font-bold">PADRÃO</span>}</p><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">{acc.type === 'banco' ? 'Global' : 'Regional'}</p></div>
                                                     </div>
@@ -374,10 +377,9 @@ export default function AdminPage() {
         </main>
       </div>
 
-      {/* Bottom Nav Mobile */}
       <BottomNav />
 
-      {/* Modal de Detalhes (Mantido Visual) */}
+      {/* Modal de Detalhes (Mantido) */}
       {selectedTransaction && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
