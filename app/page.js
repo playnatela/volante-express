@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
-import { LogOut, Plus, Wallet, Car, MapPin, Calendar, ChevronRight, Loader2 } from 'lucide-react';
+import { Plus, Car, MapPin, Calendar, ChevronRight, Loader2, ListTodo, Wallet, User, Zap } from 'lucide-react';
 
 export default function HomePage() {
   const router = useRouter();
@@ -16,7 +16,6 @@ export default function HomePage() {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [todayCommission, setTodayCommission] = useState(0);
 
   useEffect(() => {
     checkUser();
@@ -33,35 +32,15 @@ export default function HomePage() {
   }
 
   async function fetchData(userId) {
-    // CORREÇÃO DE DATA: Cria o intervalo de Hoje (Inicio 00:00 - Fim 23:59)
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
-
-    // 1. Busca Pendentes
+    // Busca apenas agendamentos pendentes/agendados para a lista principal
     const { data: apps } = await supabase
       .from('appointments')
       .select('*')
       .eq('user_id', userId)
-      .neq('status', 'concluido') // Traz tudo que NÃO está concluído (agendado, em_andamento)
+      .neq('status', 'concluido')
       .order('date', { ascending: true });
     
     setAppointments(apps || []);
-
-    // 2. Busca Ganho de Hoje (Com filtro robusto gte/lte)
-    const { data: doneToday, error } = await supabase
-      .from('appointments')
-      .select('commission_amount')
-      .eq('user_id', userId)
-      .eq('status', 'concluido')
-      .gte('completed_at', startOfDay) // Maior ou igual inicio do dia
-      .lte('completed_at', endOfDay);  // Menor ou igual fim do dia
-    
-    if (error) console.error("Erro ao buscar comissão:", error);
-
-    const totalToday = doneToday?.reduce((acc, curr) => acc + (Number(curr.commission_amount) || 0), 0) || 0;
-    setTodayCommission(totalToday);
-
     setLoading(false);
   }
 
@@ -71,7 +50,6 @@ export default function HomePage() {
 
     setCreating(true);
     const { data: { user } } = await supabase.auth.getUser();
-    
     const { data: profile } = await supabase.from('profiles').select('region_id').eq('id', user.id).single();
 
     const { data, error } = await supabase.from('appointments').insert([{
@@ -91,90 +69,101 @@ export default function HomePage() {
     }
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push('/login');
-  };
-
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white"><Loader2 className="animate-spin"/></div>;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 pb-24">
-      {/* Header */}
-      <div className="bg-slate-900 p-6 rounded-b-3xl shadow-2xl border-b border-slate-800">
-        <div className="flex justify-between items-center mb-6">
-            <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center font-bold text-white">
-                    {user?.email?.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                    <p className="text-xs text-slate-400">Bem-vindo,</p>
-                    <p className="font-bold text-white leading-none">{user?.email?.split('@')[0]}</p>
-                </div>
-            </div>
-            <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-xl text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">
-                <LogOut size={20}/>
-            </button>
+    <div className="min-h-screen bg-slate-950 text-slate-200 pb-32">
+      
+      {/* --- HEADER NOVO --- */}
+      <div className="bg-slate-900 pt-10 pb-6 rounded-b-[40px] shadow-2xl border-b border-slate-800 flex flex-col items-center justify-center relative overflow-hidden">
+        
+        {/* Efeito de Fundo (Glow) */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-64 bg-blue-600/10 blur-[80px] rounded-full pointer-events-none"></div>
+
+        {/* Logo Circular */}
+        <div className="relative z-10 w-24 h-24 bg-gradient-to-br from-blue-600 to-slate-800 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/40 mb-4 border-4 border-slate-800">
+             <Zap size={40} className="text-white fill-current" />
         </div>
 
-        {/* Card Ganho Hoje */}
-        <div onClick={() => router.push('/extrato')} className="bg-gradient-to-r from-emerald-600 to-emerald-800 p-5 rounded-2xl shadow-lg relative overflow-hidden cursor-pointer active:scale-95 transition-transform">
-            <div className="relative z-10 flex justify-between items-center">
-                <div>
-                    <p className="text-emerald-100 text-xs font-medium mb-1 flex items-center gap-1"><Wallet size={14}/> Ganho Hoje</p>
-                    <h2 className="text-3xl font-bold text-white">R$ {todayCommission.toFixed(2)}</h2>
-                </div>
-                <div className="bg-white/20 p-2 rounded-full">
-                    <ChevronRight className="text-white" size={20}/>
-                </div>
-            </div>
-            <div className="absolute -right-6 -bottom-10 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
-        </div>
+        {/* Título e Boas-vindas */}
+        <h1 className="text-2xl font-black text-white tracking-tight">VOLANTE EXPRESS</h1>
+        <p className="text-slate-400 text-sm mt-1">Bem-vindo, <span className="text-blue-400 font-bold">{user?.email?.split('@')[0]}</span></p>
       </div>
 
-      <main className="p-6 space-y-6">
-        {/* Agendamentos */}
-        <div>
-            <h3 className="text-slate-400 text-sm font-bold uppercase mb-4 flex items-center gap-2">
-                <Calendar size={16}/> Agenda / Pendentes
+      {/* --- CONTEÚDO (AGENDA) --- */}
+      <main className="p-6 space-y-4">
+        <div className="flex items-center justify-between">
+             <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                <Calendar size={14}/> Serviços Pendentes
             </h3>
-            
-            <div className="space-y-3">
-                {appointments.length === 0 && (
-                    <div className="text-center py-8 border border-dashed border-slate-800 rounded-2xl bg-slate-900/50">
-                        <p className="text-slate-500 text-sm">Sua lista está vazia.</p>
-                        <p className="text-slate-600 text-xs mt-1">Toque em "+" para iniciar um serviço.</p>
-                    </div>
-                )}
+            <span className="text-xs bg-slate-800 text-slate-500 px-2 py-1 rounded-lg">{appointments.length} itens</span>
+        </div>
+        
+        <div className="space-y-3">
+            {appointments.length === 0 && (
+                <div className="text-center py-12 border border-dashed border-slate-800 rounded-3xl bg-slate-900/30">
+                    <Car size={40} className="mx-auto text-slate-700 mb-3"/>
+                    <p className="text-slate-500 text-sm font-medium">Tudo limpo por aqui.</p>
+                    <p className="text-slate-600 text-xs mt-1">Toque no "+" para iniciar.</p>
+                </div>
+            )}
 
-                {appointments.map(app => (
-                    <div key={app.id} onClick={() => router.push(`/atendimento/${app.id}`)} className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex justify-between items-center active:scale-95 transition-transform cursor-pointer">
-                        <div className="flex items-center gap-4">
-                            <div className="bg-blue-900/30 p-3 rounded-lg text-blue-400">
-                                <Car size={20}/>
-                            </div>
-                            <div>
-                                <h4 className="font-bold text-white">{app.vehicle_model}</h4>
-                                <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
-                                    <MapPin size={12}/> {app.customer_name}
-                                </p>
-                            </div>
+            {appointments.map(app => (
+                <div key={app.id} onClick={() => router.push(`/atendimento/${app.id}`)} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center active:scale-95 transition-transform cursor-pointer hover:border-blue-500/30 shadow-md">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-blue-950/50 p-3 rounded-xl text-blue-400 border border-blue-900/30">
+                            <Car size={20}/>
                         </div>
-                        <ChevronRight className="text-slate-600" size={20}/>
+                        <div>
+                            <h4 className="font-bold text-white text-lg">{app.vehicle_model}</h4>
+                            <p className="text-xs text-slate-500 flex items-center gap-1 mt-1 font-medium">
+                                <MapPin size={12}/> {app.customer_name}
+                            </p>
+                        </div>
                     </div>
-                ))}
-            </div>
+                    <div className="bg-slate-800 p-2 rounded-full">
+                        <ChevronRight className="text-slate-500" size={16}/>
+                    </div>
+                </div>
+            ))}
         </div>
       </main>
 
-      {/* Botão Flutuante */}
+      {/* --- BOTÃO FLUTUANTE (FAB) --- */}
+      {/* Posicionado mais acima (bottom-24) para não bater no menu */}
       <button 
         onClick={handleNewService}
         disabled={creating}
-        className="fixed bottom-6 right-6 w-16 h-16 bg-blue-600 hover:bg-blue-500 rounded-full shadow-2xl shadow-blue-900/50 flex items-center justify-center text-white transition-transform active:scale-90 z-30"
+        className="fixed bottom-24 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-500 rounded-2xl shadow-lg shadow-blue-600/30 flex items-center justify-center text-white transition-transform active:scale-90 z-30"
       >
-        {creating ? <Loader2 className="animate-spin"/> : <Plus size={32}/>}
+        {creating ? <Loader2 className="animate-spin"/> : <Plus size={28}/>}
       </button>
+
+      {/* --- MENU INFERIOR FIXO --- */}
+      <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 pb-6 pt-2 px-6 z-40">
+        <div className="flex justify-around items-center">
+            
+            {/* Botão Agenda (Ativo) */}
+            <button className="flex flex-col items-center gap-1 p-2 text-blue-500">
+                <ListTodo size={24} strokeWidth={2.5} />
+                <span className="text-[10px] font-bold">Agenda</span>
+            </button>
+
+            {/* Botão Comissões */}
+            <button onClick={() => router.push('/extrato')} className="flex flex-col items-center gap-1 p-2 text-slate-500 hover:text-slate-300 transition-colors">
+                <Wallet size={24} />
+                <span className="text-[10px] font-medium">Comissões</span>
+            </button>
+
+            {/* Botão Perfil */}
+            <button onClick={() => alert('Configurações de perfil em breve!')} className="flex flex-col items-center gap-1 p-2 text-slate-500 hover:text-slate-300 transition-colors">
+                <User size={24} />
+                <span className="text-[10px] font-medium">Perfil</span>
+            </button>
+
+        </div>
+      </div>
+
     </div>
   );
 }
