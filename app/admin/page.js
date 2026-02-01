@@ -2,7 +2,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
-import { TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, Star, Package, Plus, Save, Eye, X, PieChart as PieIcon, BarChart3 } from 'lucide-react';
+// Adicionei Users aqui nos imports
+import { TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, Star, Package, Plus, Save, Eye, X, PieChart as PieIcon, BarChart3, Users } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
@@ -26,6 +27,7 @@ export default function AdminPage() {
   const [accounts, setAccounts] = useState([]);
   const [rates, setRates] = useState([]);
   const [inventory, setInventory] = useState([]); 
+  const [installers, setInstallers] = useState([]); // NOVO: Lista de instaladores
   
   // Forms & Edição
   const [newAccount, setNewAccount] = useState({ name: '', type: 'banco' });
@@ -38,7 +40,7 @@ export default function AdminPage() {
   const [isEditingInv, setIsEditingInv] = useState(null);
   const [editInvForm, setEditInvForm] = useState({});
 
-  // MODAL DE DETALHES (Restaurado)
+  // MODAL DE DETALHES
   const [selectedTransaction, setSelectedTransaction] = useState(null);
 
   useEffect(() => { loadRegions(); }, []);
@@ -52,6 +54,10 @@ export default function AdminPage() {
   async function fetchData() {
     setLoading(true);
     
+    // NOVO: Busca Instaladores para saber os nomes na hora de pagar comissão
+    const { data: profiles } = await supabase.from('profiles').select('*');
+    setInstallers(profiles || []);
+
     // 1. Estoque
     const { data: inv } = await supabase.from('inventory').select('*').eq('region_id', selectedRegion).order('name');
     setInventory(inv || []);
@@ -129,7 +135,7 @@ export default function AdminPage() {
     fetchData();
   }
 
-  // --- CÁLCULOS E GRÁFICOS (RESTAURADOS) ---
+  // --- CÁLCULOS E GRÁFICOS ---
   const filteredData = useMemo(() => {
     const apps = appointments.filter(a => (a.completed_at || a.created_at).startsWith(selectedMonth));
     const exps = expenses.filter(e => (e.date || e.created_at).startsWith(selectedMonth));
@@ -169,10 +175,29 @@ export default function AdminPage() {
     };
   }, [filteredData, inventory]);
 
+  // NOVO: Cálculo do Relatório de Comissões
+  const commissionReport = useMemo(() => {
+    const report = {};
+    filteredData.apps.forEach(app => {
+        // Se tem user_id e comissão > 0
+        if (!report[app.user_id]) report[app.user_id] = { count: 0, total: 0, name: 'Desconhecido' };
+        
+        report[app.user_id].count += 1;
+        report[app.user_id].total += (Number(app.commission_amount) || 0);
+        
+        // Tenta achar o nome do instalador
+        const installer = installers.find(i => i.id === app.user_id);
+        if (installer) {
+            report[app.user_id].name = installer.full_name || installer.email;
+        }
+    });
+    return Object.values(report);
+  }, [filteredData, installers]);
+
   return (
     <div className="min-h-screen bg-gray-100 p-4 md:p-8 font-sans text-slate-800 relative">
       
-      {/* --- MODAL / POP-UP (RESTAURADO) --- */}
+      {/* --- MODAL / POP-UP --- */}
       {selectedTransaction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -201,6 +226,10 @@ export default function AdminPage() {
                                 <span className="text-xs text-slate-500 capitalize">{selectedTransaction.payment_method} {selectedTransaction.installments > 1 ? `(${selectedTransaction.installments}x)` : ''}</span>
                                 {selectedTransaction.net_amount && (
                                     <span className="text-xs text-slate-400 mt-1">Líquido: R$ {Number(selectedTransaction.net_amount).toFixed(2)}</span>
+                                )}
+                                {/* Mostra comissão no modal se existir */}
+                                {selectedTransaction.commission_amount > 0 && (
+                                    <span className="text-xs text-blue-600 mt-2 font-bold bg-blue-50 w-fit px-2 py-1 rounded">Comissão: R$ {Number(selectedTransaction.commission_amount).toFixed(2)}</span>
                                 )}
                              </div>
                         </div>
@@ -237,10 +266,11 @@ export default function AdminPage() {
 
         {/* Abas */}
         <div className="flex gap-2 overflow-x-auto pb-2">
-            {['dashboard', 'financeiro', 'estoque', 'configuracoes'].map(tab => (
+            {['dashboard', 'financeiro', 'equipe', 'estoque', 'configuracoes'].map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)} 
                   className={`px-6 py-2 rounded-lg text-sm font-bold capitalize whitespace-nowrap ${activeTab === tab ? 'bg-slate-900 text-white shadow-md' : 'bg-white text-slate-500 hover:bg-gray-50'}`}>
-                    {tab === 'configuracoes' ? <span className="flex items-center gap-2"><Settings size={14}/> Config</span> : tab}
+                    {tab === 'configuracoes' ? <span className="flex items-center gap-2"><Settings size={14}/> Config</span> : 
+                     tab === 'equipe' ? <span className="flex items-center gap-2"><Users size={14}/> Equipe</span> : tab}
                 </button>
             ))}
         </div>
@@ -274,7 +304,6 @@ export default function AdminPage() {
                         </div>
                     </div>
 
-                    {/* GRÁFICOS RESTAURADOS */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
                              <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><BarChart3 size={16}/> Receita por Pagamento</h4>
@@ -303,6 +332,35 @@ export default function AdminPage() {
                                     <Legend />
                                 </PieChart>
                              </ResponsiveContainer>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ABA EQUIPE / COMISSÕES (NOVO) */}
+            {activeTab === 'equipe' && (
+                <div className="space-y-6 animate-in fade-in">
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                        <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Users size={20}/> Comissões a Pagar ({selectedMonth})</h3>
+                        <p className="text-sm text-slate-500 mb-6">Valores baseados nos serviços concluídos nesta região ({selectedRegion}).</p>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {commissionReport.map((rep, i) => (
+                                <div key={i} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 hover:border-blue-300 transition-colors">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div>
+                                            <p className="font-bold text-slate-800 text-lg">{rep.name || 'Sem Nome'}</p>
+                                            <p className="text-xs text-slate-500">{rep.count} serviços realizados</p>
+                                        </div>
+                                        <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">A Pagar</div>
+                                    </div>
+                                    <div className="flex justify-between items-end">
+                                        <p className="text-3xl font-bold text-slate-900">R$ {rep.total.toFixed(2)}</p>
+                                        {/* Futuro: Botão de Pagar */}
+                                    </div>
+                                </div>
+                            ))}
+                            {commissionReport.length === 0 && <p className="text-slate-400 py-10 col-span-full text-center">Nenhuma comissão registrada neste mês para {selectedRegion}.</p>}
                         </div>
                     </div>
                 </div>

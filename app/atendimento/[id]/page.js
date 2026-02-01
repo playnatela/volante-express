@@ -30,10 +30,25 @@ export default function AtendimentoPage({ params }) {
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
 
+  // NOVO: Estado para armazenar a comissão do usuário logado
+  const [myCommission, setMyCommission] = useState(0);
+
   useEffect(() => { loadData(); }, [id]);
 
   async function loadData() {
     try {
+      // 0. Busca Usuário Logado e sua Comissão Fixa
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('commission_rate')
+            .eq('id', user.id)
+            .single();
+        // Se tiver valor no banco usa ele, senão assume 0
+        setMyCommission(profile?.commission_rate || 0);
+      }
+
       // 1. Busca Agendamento
       const { data: appData, error: appError } = await supabase.from('appointments').select('*').eq('id', id).single();
       if (appError) throw appError;
@@ -100,7 +115,7 @@ export default function AtendimentoPage({ params }) {
          }
       }
 
-      // 4. Salvar no Banco
+      // 4. Salvar no Banco (AGORA COM COMISSÃO)
       const { error: updateError } = await supabase.from('appointments').update({
           status: 'concluido',
           material_used_id: selectedMaterial,
@@ -110,6 +125,7 @@ export default function AtendimentoPage({ params }) {
           net_amount: netVal,
           payment_rate_snapshot: taxPercent,
           account_id: targetAccountId,
+          commission_amount: myCommission, // <--- SALVA AQUI OS R$ 25,00
           photo_url: publicUrl,
           completed_at: new Date().toISOString(),
         }).eq('id', id);
