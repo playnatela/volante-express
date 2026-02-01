@@ -33,24 +33,32 @@ export default function HomePage() {
   }
 
   async function fetchData(userId) {
-    const today = new Date().toISOString().slice(0, 10);
+    // CORREÇÃO DE DATA: Cria o intervalo de Hoje (Inicio 00:00 - Fim 23:59)
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
+    // 1. Busca Pendentes
     const { data: apps } = await supabase
       .from('appointments')
       .select('*')
       .eq('user_id', userId)
-      .eq('status', 'agendado')
+      .neq('status', 'concluido') // Traz tudo que NÃO está concluído (agendado, em_andamento)
       .order('date', { ascending: true });
     
     setAppointments(apps || []);
 
-    const { data: doneToday } = await supabase
+    // 2. Busca Ganho de Hoje (Com filtro robusto gte/lte)
+    const { data: doneToday, error } = await supabase
       .from('appointments')
       .select('commission_amount')
       .eq('user_id', userId)
       .eq('status', 'concluido')
-      .like('completed_at', `${today}%`);
+      .gte('completed_at', startOfDay) // Maior ou igual inicio do dia
+      .lte('completed_at', endOfDay);  // Menor ou igual fim do dia
     
+    if (error) console.error("Erro ao buscar comissão:", error);
+
     const totalToday = doneToday?.reduce((acc, curr) => acc + (Number(curr.commission_amount) || 0), 0) || 0;
     setTodayCommission(totalToday);
 
@@ -64,23 +72,19 @@ export default function HomePage() {
     setCreating(true);
     const { data: { user } } = await supabase.auth.getUser();
     
-    // Busca região
     const { data: profile } = await supabase.from('profiles').select('region_id').eq('id', user.id).single();
 
-    // Tenta criar o serviço
     const { data, error } = await supabase.from('appointments').insert([{
         user_id: user.id,
         vehicle_model: model,
         customer_name: 'Cliente Avulso',
-        status: 'agendado', // Mudei para 'agendado' para evitar travar se 'em_andamento' nao existir
+        status: 'agendado',
         date: new Date().toISOString(),
         region_id: profile?.region_id || 'divinopolis'
     }]).select().single();
 
     if (error) {
-        // AQUI ESTÁ A CORREÇÃO: Mostra o erro real
         alert('Erro detalhado: ' + error.message);
-        console.error(error);
         setCreating(false);
     } else {
         router.push(`/atendimento/${data.id}`);
@@ -96,7 +100,6 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 pb-24">
-      
       {/* Header */}
       <div className="bg-slate-900 p-6 rounded-b-3xl shadow-2xl border-b border-slate-800">
         <div className="flex justify-between items-center mb-6">
@@ -130,7 +133,6 @@ export default function HomePage() {
       </div>
 
       <main className="p-6 space-y-6">
-        
         {/* Agendamentos */}
         <div>
             <h3 className="text-slate-400 text-sm font-bold uppercase mb-4 flex items-center gap-2">
@@ -163,10 +165,9 @@ export default function HomePage() {
                 ))}
             </div>
         </div>
-
       </main>
 
-      {/* Botão Flutuante (FAB) */}
+      {/* Botão Flutuante */}
       <button 
         onClick={handleNewService}
         disabled={creating}
@@ -174,7 +175,6 @@ export default function HomePage() {
       >
         {creating ? <Loader2 className="animate-spin"/> : <Plus size={32}/>}
       </button>
-
     </div>
   );
 }

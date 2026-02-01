@@ -15,7 +15,7 @@ export default function ExtratoPage() {
   const [loading, setLoading] = useState(true);
   const [transactions, setTransactions] = useState([]);
   const [totalCommission, setTotalCommission] = useState(0);
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // Formato YYYY-MM
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
 
   useEffect(() => {
     fetchCommissions();
@@ -26,18 +26,23 @@ export default function ExtratoPage() {
     const { data: { user } } = await supabase.auth.getUser();
 
     if (user) {
-      // Busca serviços CONCLUÍDOS do usuário logado no mês selecionado
-      const { data: services } = await supabase
+      // CORREÇÃO: Define inicio e fim do Mês selecionado
+      const [ano, mes] = month.split('-');
+      const startOfMonth = new Date(ano, mes - 1, 1).toISOString();
+      // O dia "0" do mês seguinte é o último dia deste mês
+      const endOfMonth = new Date(ano, mes, 0, 23, 59, 59).toISOString();
+
+      const { data: services, error } = await supabase
         .from('appointments')
         .select('*')
-        .eq('user_id', user.id) // Apenas serviços dele
+        .eq('user_id', user.id)
         .eq('status', 'concluido')
-        .like('completed_at', `${month}%`) // Filtro de data (texto)
+        .gte('completed_at', startOfMonth) // Maior ou igual dia 1
+        .lte('completed_at', endOfMonth)   // Menor ou igual dia 30/31
         .order('completed_at', { ascending: false });
 
       if (services) {
         setTransactions(services);
-        // Soma as comissões gravadas no banco
         const total = services.reduce((acc, curr) => acc + (Number(curr.commission_amount) || 0), 0);
         setTotalCommission(total);
       }
@@ -47,8 +52,6 @@ export default function ExtratoPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 pb-20 text-slate-200">
-      
-      {/* Cabeçalho */}
       <div className="bg-slate-900 p-4 shadow-lg border-b border-slate-800 flex items-center gap-4 sticky top-0 z-20">
         <button onClick={() => router.back()} className="p-2 hover:bg-slate-800 rounded-full text-slate-400 transition-colors">
           <ArrowLeft size={22} />
@@ -57,8 +60,6 @@ export default function ExtratoPage() {
       </div>
 
       <main className="max-w-md mx-auto p-5 space-y-6">
-        
-        {/* Filtro de Data */}
         <div className="flex justify-end">
             <div className="relative">
                 <input 
@@ -70,18 +71,15 @@ export default function ExtratoPage() {
             </div>
         </div>
 
-        {/* Card de Saldo */}
         <div className="bg-gradient-to-br from-green-600 to-emerald-800 p-6 rounded-3xl shadow-xl shadow-green-900/20 text-white relative overflow-hidden">
             <div className="relative z-10">
                 <p className="text-green-100 text-sm font-medium mb-1 flex items-center gap-2"><Wallet size={16}/> Comissões em {month.split('-')[1]}/{month.split('-')[0]}</p>
                 <h2 className="text-4xl font-bold tracking-tight">R$ {totalCommission.toFixed(2)}</h2>
                 <p className="text-green-200 text-xs mt-2 opacity-80">{transactions.length} serviços realizados</p>
             </div>
-            {/* Ícone de fundo decorativo */}
             <TrendingUp className="absolute right-4 bottom-4 text-green-400 opacity-20" size={80} />
         </div>
 
-        {/* Lista de Extrato */}
         <div className="space-y-4">
             <h3 className="font-bold text-slate-400 text-sm uppercase ml-1">Histórico do Mês</h3>
             
@@ -110,7 +108,6 @@ export default function ExtratoPage() {
                 </div>
             )}
         </div>
-
       </main>
     </div>
   );
