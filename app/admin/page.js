@@ -30,7 +30,7 @@ export default function AdminPage() {
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', category: 'Operacional', account_id: '' });
   const [editingRate, setEditingRate] = useState(null);
   
-  // Estoque (Trazendo de volta!)
+  // Estoque
   const [newItem, setNewItem] = useState({ name: '', quantity: 0, min_threshold: 5 });
   const [showAddForm, setShowAddForm] = useState(false);
   const [isEditingInv, setIsEditingInv] = useState(null);
@@ -47,7 +47,7 @@ export default function AdminPage() {
   async function fetchData() {
     setLoading(true);
     
-    // 1. Estoque (Restaurado)
+    // 1. Estoque
     const { data: inv } = await supabase.from('inventory').select('*').eq('region_id', selectedRegion).order('name');
     setInventory(inv || []);
     
@@ -91,7 +91,7 @@ export default function AdminPage() {
     fetchData();
   }
 
-  // NOVA FUNÇÃO: Definir conta padrão
+  // Define conta padrão
   async function handleSetDefault(accountId) {
     // 1. Remove padrão de todas as contas globais (bancos)
     await supabase.from('accounts').update({ is_default: false }).is('region_id', null);
@@ -121,7 +121,7 @@ export default function AdminPage() {
     }
   }
 
-  // --- AÇÕES ESTOQUE (RESTAURADAS) ---
+  // --- AÇÕES ESTOQUE ---
   async function handleAddInventory(e) {
     e.preventDefault();
     await supabase.from('inventory').insert([{ ...newItem, region_id: selectedRegion }]);
@@ -254,7 +254,7 @@ export default function AdminPage() {
                 </div>
             )}
 
-            {/* ESTOQUE (DE VOLTA E COMPLETO) */}
+            {/* ESTOQUE */}
             {activeTab === 'estoque' && (
                 <div className="space-y-6 animate-in fade-in">
                     <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
@@ -303,7 +303,7 @@ export default function AdminPage() {
                 </div>
             )}
 
-            {/* CONFIGURAÇÕES (ATUALIZADO COM CONTA PADRÃO) */}
+            {/* CONFIGURAÇÕES */}
             {activeTab === 'configuracoes' && (
                 <div className="space-y-8 animate-in fade-in">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -313,8 +313,74 @@ export default function AdminPage() {
                                 {accounts.map(acc => (
                                     <div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}>
                                         <div className="flex items-center gap-3">
-                                            {/* CHECKBOX DE CONTA PADRÃO */}
+                                            {/* CHECKBOX CORRIGIDO */}
                                             {acc.type === 'banco' && (
                                                 <button 
                                                     onClick={() => handleSetDefault(acc.id)}
-                                                    className={`p-1 rounded-full transition-colors ${acc.is_default ? 'text-yellow-500' : 'text-gray-300
+                                                    className={`p-1 rounded-full transition-colors ${acc.is_default ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}
+                                                    title="Definir como conta padrão para recebimentos"
+                                                >
+                                                    <Star size={20} fill={acc.is_default ? "currentColor" : "none"} />
+                                                </button>
+                                            )}
+                                            {acc.type === 'carteira' && <div className="w-5"></div>}
+
+                                            <div>
+                                                <p className={`font-bold ${acc.is_default ? 'text-blue-700' : 'text-slate-800'}`}>
+                                                    {acc.name} {acc.is_default && <span className="text-xs bg-blue-200 text-blue-800 px-1 rounded ml-1">PADRÃO</span>}
+                                                </p>
+                                                <p className="text-xs text-slate-500">{acc.type === 'banco' ? 'Global (Todas Regionais)' : `Regional (${selectedRegion})`}</p>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => handleDeleteAccount(acc.id)} className="text-red-400 p-2 hover:bg-red-50 rounded"><Trash2 size={16}/></button>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="text-xs text-slate-400 mt-4 flex items-center gap-1"><Star size={12}/> Marque a estrela para definir onde o dinheiro de PIX/Cartão cai automaticamente.</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-fit">
+                            <h4 className="font-bold text-slate-800 mb-4">Adicionar Conta</h4>
+                            <form onSubmit={handleAddAccount} className="space-y-4">
+                                <div><label className="text-xs font-bold text-slate-500">Nome</label><input className="w-full p-3 border rounded-xl" required value={newAccount.name} onChange={e => setNewAccount({...newAccount, name: e.target.value})} placeholder="Ex: Nubank ou Caixa Loja" /></div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500">Tipo</label>
+                                    <select className="w-full p-3 border rounded-xl" value={newAccount.type} onChange={e => setNewAccount({...newAccount, type: e.target.value})}>
+                                        <option value="banco">Banco (Global/Único)</option>
+                                        <option value="carteira">Carteira (Dinheiro desta Região)</option>
+                                    </select>
+                                    <p className="text-xs text-slate-400 mt-1">
+                                        {newAccount.type === 'banco' ? 'Visível para todas as cidades.' : `Visível apenas para ${selectedRegion}.`}
+                                    </p>
+                                </div>
+                                <button className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500">Criar</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                        <h4 className="font-bold text-slate-800 mb-4">Taxas de Maquininha (Globais)</h4>
+                        <table className="w-full text-sm">
+                            <tbody className="divide-y divide-gray-100">
+                                {rates.map(rate => (
+                                    <tr key={rate.id}>
+                                        <td className="p-3 font-bold capitalize">{rate.method} {rate.installments > 1 && `${rate.installments}x`}</td>
+                                        <td className="p-3 text-right">
+                                            {editingRate?.id === rate.id ? (
+                                                <div className="flex justify-end gap-2"><input className="w-16 border rounded text-center" type="number" step="0.01" value={editingRate.rate_percent} onChange={e => setEditingRate({...editingRate, rate_percent: e.target.value})} /><button onClick={() => handleUpdateRate(editingRate)} className="text-green-600 font-bold">OK</button></div>
+                                            ) : (
+                                                <button onClick={() => setEditingRate(rate)} className="text-blue-600 font-bold hover:underline">{rate.rate_percent}%</button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+            </>
+        )}
+      </div>
+    </div>
+  );
+}
