@@ -6,14 +6,14 @@ import {
   TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, 
   Star, Package, Plus, Save, Eye, X, PieChart as PieIcon, 
   BarChart3, Users, LayoutDashboard, LogOut, Wallet, 
-  ArrowRightLeft, Pencil
+  ArrowRightLeft, Pencil, MapPin
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, 
   PieChart, Pie, Legend 
 } from 'recharts';
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ef4444', '#3b82f6'];
 
 export default function AdminPage() {
   const router = useRouter();
@@ -37,7 +37,7 @@ export default function AdminPage() {
   const [installers, setInstallers] = useState([]);
   const [categories, setCategories] = useState([]);
 
-  // Modais e Estados de UI
+  // Modais e Estados
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferData, setTransferData] = useState({ from: '', to: '', amount: '', date: new Date().toISOString().slice(0,10) });
   const [editingItem, setEditingItem] = useState(null);
@@ -66,55 +66,33 @@ export default function AdminPage() {
   async function fetchData() {
     setLoading(true);
     
-    // 1. Definição Precisa das Datas (Inicio e Fim do Mês)
     const [ano, mes] = selectedMonth.split('-');
-    // Primeiro dia do mês às 00:00:00
     const startOfMonth = new Date(Number(ano), Number(mes) - 1, 1).toISOString();
-    // Último dia do mês às 23:59:59
     const endOfMonth = new Date(Number(ano), Number(mes), 0, 23, 59, 59).toISOString();
 
-    // 2. Buscando Serviços (Instalações)
-    let appQuery = supabase
-        .from('appointments')
-        .select('*')
-        .eq('status', 'concluido')
-        .gte('completed_at', startOfMonth) // Maior ou igual ao dia 1
-        .lte('completed_at', endOfMonth);  // Menor ou igual ao último dia
-    
+    // 1. Serviços
+    let appQuery = supabase.from('appointments').select('*').eq('status', 'concluido').gte('completed_at', startOfMonth).lte('completed_at', endOfMonth);
     if (selectedRegion !== 'all') appQuery = appQuery.eq('region_id', selectedRegion);
     const { data: apps } = await appQuery;
     setAppointments(apps || []);
 
-    // 3. Buscando Despesas
-    let expQuery = supabase
-        .from('expenses')
-        .select('*, expense_categories(name)')
-        .gte('date', startOfMonth)
-        .lte('date', endOfMonth);
-
+    // 2. Despesas
+    let expQuery = supabase.from('expenses').select('*, expense_categories(name)').gte('date', startOfMonth).lte('date', endOfMonth);
     if (selectedRegion !== 'all') expQuery = expQuery.eq('region_id', selectedRegion);
     const { data: exps } = await expQuery;
     setExpenses(exps || []);
 
-    // 4. Buscando Contas (Correção para aparecer na Config)
-    let accQuery = supabase.from('accounts').select('*').order('name');
-    const { data: allAccs } = await accQuery;
-    
-    // Filtra no Javascript para garantir que contas globais apareçam sempre
-    const filteredAccs = allAccs?.filter(acc => 
-        selectedRegion === 'all' || 
-        acc.type === 'banco' || // Bancos globais aparecem sempre
-        acc.region_id === selectedRegion
-    );
-    setAccounts(filteredAccs || []);
+    // 3. Contas (Traz TODAS para a config, filtra visualmente nas outras abas)
+    const { data: allAccs } = await supabase.from('accounts').select('*').order('name');
+    setAccounts(allAccs || []);
 
-    // 5. Estoque
+    // 4. Estoque
     let invQuery = supabase.from('inventory').select('*').order('name');
     if (selectedRegion !== 'all') invQuery = invQuery.eq('region_id', selectedRegion);
     const { data: inv } = await invQuery;
     setInventory(inv || []);
 
-    // 6. Tabelas Globais (Instaladores, Categorias, Taxas)
+    // 5. Globais
     const { data: profs } = await supabase.from('profiles').select('*');
     setInstallers(profs || []);
     
@@ -127,11 +105,12 @@ export default function AdminPage() {
     setLoading(false);
   }
 
-  // --- FUNÇÕES DE AÇÃO (CRUD) ---
+  // --- CRUD GERAL ---
   async function handleDelete(table, id) {
     if(!confirm('Tem certeza?')) return;
-    await supabase.from(table).delete().eq('id', id);
-    fetchData();
+    const { error } = await supabase.from(table).delete().eq('id', id);
+    if (error) alert('Erro: ' + error.message);
+    else fetchData();
   }
 
   function openEditModal(type, item) {
@@ -146,14 +125,27 @@ export default function AdminPage() {
     if (modalType === 'expense') table = 'expenses';
     if (modalType === 'installer') table = 'profiles';
 
+    // LIMPEZA CRÍTICA: Remove campos visuais que não existem no banco
     const payload = { ...editingItem };
-    delete payload.expense_categories; // Remove objeto aninhado para não dar erro
+    
+    // Lista de campos proibidos para envio ao Supabase
+    const forbiddenFields = [
+        'expense_categories', 'label', 'type', 'date', 'val', 'desc', 'email' // Email é gerido pelo Auth, evitar update aqui por segurança básica
+    ];
+    
+    forbiddenFields.forEach(field => delete payload[field]);
 
     const { error } = await supabase.from(table).update(payload).eq('id', editingItem.id);
-    if (error) alert('Erro: ' + error.message);
-    else { setShowEditModal(false); fetchData(); }
+    
+    if (error) {
+        alert('Erro ao atualizar: ' + error.message);
+    } else { 
+        setShowEditModal(false); 
+        fetchData(); 
+    }
   }
 
+  // --- AÇÕES FINANCEIRAS ---
   async function handleAddAccount(e) {
     e.preventDefault();
     const reg = newAccount.type === 'banco' ? null : (selectedRegion === 'all' ? 'divinopolis' : selectedRegion);
@@ -166,11 +158,9 @@ export default function AdminPage() {
     if(transferData.from === transferData.to) return alert('Contas iguais!');
     const amount = Number(transferData.amount);
     
-    // Atualiza Origem
     const { data: fromAcc } = await supabase.from('accounts').select('balance').eq('id', transferData.from).single();
     await supabase.from('accounts').update({ balance: (fromAcc?.balance || 0) - amount }).eq('id', transferData.from);
 
-    // Atualiza Destino
     const { data: toAcc } = await supabase.from('accounts').select('balance').eq('id', transferData.to).single();
     await supabase.from('accounts').update({ balance: (toAcc?.balance || 0) + amount }).eq('id', transferData.to);
 
@@ -195,14 +185,14 @@ export default function AdminPage() {
       setNewCategory(''); fetchData();
   }
 
-  // --- OUTROS HELPERS ---
+  // --- OUTROS ---
   async function handleSetDefault(accountId) { await supabase.from('accounts').update({ is_default: false }).is('region_id', null); await supabase.from('accounts').update({ is_default: true }).eq('id', accountId); fetchData(); }
   async function handleUpdateRate(rate) { await supabase.from('payment_rates').update({ rate_percent: rate.rate_percent }).eq('id', rate.id); setEditingRate(null); fetchData(); }
   async function handleAddInventory(e) { e.preventDefault(); const reg = selectedRegion === 'all' ? 'divinopolis' : selectedRegion; await supabase.from('inventory').insert([{ ...newItem, region_id: reg }]); setNewItem({ name: '', quantity: 0, min_threshold: 5 }); setShowAddForm(false); fetchData(); }
   async function handleUpdateInventory(id) { await supabase.from('inventory').update({ quantity: editInvForm.quantity }).eq('id', id); setIsEditingInv(null); fetchData(); }
   async function handleLogout() { await supabase.auth.signOut(); router.push('/login'); }
 
-  // --- CÁLCULOS DOS GRÁFICOS ---
+  // --- CÁLCULOS ---
   const dashboardStats = useMemo(() => {
     const totalIncome = appointments.reduce((acc, curr) => acc + (Number(curr.gross_amount) || Number(curr.amount) || 0), 0);
     const totalNetIncome = appointments.reduce((acc, curr) => acc + (Number(curr.net_amount) || Number(curr.amount) || 0), 0);
@@ -225,19 +215,28 @@ export default function AdminPage() {
     return { totalIncome, totalExpense, profit: totalNetIncome - totalExpense, pieData, barData };
   }, [appointments, expenses]);
 
+  // CORREÇÃO: Equipe agora lista TODOS os instaladores, não só os com serviço
   const commissionReport = useMemo(() => {
-    const report = {};
-    appointments.forEach(app => {
-        if (!report[app.user_id]) report[app.user_id] = { count: 0, total: 0, name: 'Desconhecido', region_id: app.region_id };
-        report[app.user_id].count += 1;
-        report[app.user_id].total += (Number(app.commission_amount) || 0);
-        const installer = installers.find(i => i.id === app.user_id);
-        if (installer) report[app.user_id].name = installer.full_name || installer.email;
+    return installers.map(inst => {
+        const myApps = appointments.filter(a => a.user_id === inst.id);
+        const total = myApps.reduce((acc, curr) => acc + (Number(curr.commission_amount) || 0), 0);
+        return {
+            id: inst.id,
+            name: inst.full_name || inst.email,
+            count: myApps.length,
+            total: total,
+            commission_rate: inst.commission_rate,
+            full_name: inst.full_name,
+            email: inst.email
+        };
     });
-    return Object.values(report);
   }, [appointments, installers]);
 
-  // --- UI COMPONENTS ---
+  // Filtra contas para exibição no Dashboard e Financeiro (respeitando a Regional)
+  const displayAccounts = useMemo(() => {
+      return accounts.filter(acc => selectedRegion === 'all' || acc.type === 'banco' || acc.region_id === selectedRegion);
+  }, [accounts, selectedRegion]);
+
   const Sidebar = () => (
     <aside className="hidden md:flex w-64 flex-col bg-slate-900 text-slate-300 h-screen fixed left-0 top-0 z-50">
         <div className="p-6 flex justify-center border-b border-slate-800">
@@ -301,14 +300,15 @@ export default function AdminPage() {
                     )}
                     {modalType === 'installer' && (
                         <>
-                            <div><label className="text-xs font-bold text-slate-500">Nome Completo</label><input className="w-full p-3 border rounded-xl" value={editingItem.full_name} onChange={e => setEditingItem({...editingItem, full_name: e.target.value})} /></div>
-                            <div><label className="text-xs font-bold text-slate-500">Comissão (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.commission_rate} onChange={e => setEditingItem({...editingItem, commission_rate: e.target.value})} /></div>
+                            <div><label className="text-xs font-bold text-slate-500">Nome Completo</label><input className="w-full p-3 border rounded-xl" value={editingItem.full_name || ''} onChange={e => setEditingItem({...editingItem, full_name: e.target.value})} /></div>
+                            <div><label className="text-xs font-bold text-slate-500">Comissão Padrão (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.commission_rate} onChange={e => setEditingItem({...editingItem, commission_rate: e.target.value})} /></div>
+                            <p className="text-xs text-amber-600 mt-2 bg-amber-50 p-2 rounded">* Alterar a comissão aqui mudará apenas para serviços FUTUROS.</p>
                         </>
                     )}
                 </div>
                 <div className="flex gap-3 mt-6">
                     <button onClick={() => setShowEditModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl">Cancelar</button>
-                    <button onClick={handleSaveEdit} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500">Salvar</button>
+                    <button onClick={handleSaveEdit} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500">Salvar Alterações</button>
                 </div>
             </div>
         </div>
@@ -331,8 +331,7 @@ export default function AdminPage() {
       )}
 
       <div className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden">
-        
-        {/* HEADER ESCURO */}
+        {/* HEADER */}
         <div className="bg-slate-900 border-b border-slate-800 p-4 md:p-6 flex flex-col md:flex-row justify-between items-center gap-4 shadow-sm z-40 relative text-white">
             <div className="md:hidden w-full flex justify-center mb-2">
                 <img src="/icon-horizontal.png" alt="Logo" className="h-8 object-contain brightness-0 invert" />
@@ -370,8 +369,8 @@ export default function AdminPage() {
                             </div>
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                                 <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Banknote size={20} className="text-blue-600"/> Saldos em Conta</h3>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {accounts.map(acc => (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                    {displayAccounts.map(acc => (
                                         <div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}>
                                             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{acc.type === 'banco' ? 'Banco Global' : `Caixa ${acc.region_id || 'Regional'}`}</p>
                                             <p className="font-bold text-lg text-slate-900 truncate">{acc.name}</p>
@@ -392,7 +391,8 @@ export default function AdminPage() {
                         <div className="space-y-6">
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                                 <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-800 flex items-center gap-2"><Banknote size={20} className="text-blue-600"/> Saldos</h3><button onClick={() => setShowTransferModal(true)} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors"><ArrowRightLeft size={14}/> Transferir</button></div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map(acc => (<div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{acc.type === 'banco' ? 'Banco Global' : `Caixa ${acc.region_id || 'Regional'}`}</p><p className="font-bold text-lg text-slate-900 truncate">{acc.name}</p><p className={`text-xl font-bold mt-1 ${Number(acc.balance) < 0 ? 'text-red-600' : 'text-slate-700'}`}>R$ {Number(acc.balance).toFixed(2)}</p></div>))}</div>
+                                {/* CORREÇÃO: Grid de 4 colunas em telas grandes */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">{displayAccounts.map(acc => (<div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{acc.type === 'banco' ? 'Banco Global' : `Caixa ${acc.region_id || 'Regional'}`}</p><p className="font-bold text-lg text-slate-900 truncate">{acc.name}</p><p className={`text-xl font-bold mt-1 ${Number(acc.balance) < 0 ? 'text-red-600' : 'text-slate-700'}`}>R$ {Number(acc.balance).toFixed(2)}</p></div>))}</div>
                             </div>
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                                 <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><TrendingDown className="text-red-500" size={20}/> Nova Despesa</h3>
@@ -405,7 +405,8 @@ export default function AdminPage() {
                                 </form>
                             </div>
                             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                                <table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-medium border-b border-gray-100"><tr><th className="p-4">Data</th><th className="p-4">Descrição</th><th className="p-4 text-right">Valor</th><th className="p-4 text-center">Ações</th></tr></thead><tbody className="divide-y divide-gray-100">{[...appointments.map(a => ({...a, type: 'in', date: a.completed_at, val: a.gross_amount, label: `${a.vehicle_model} - ${a.customer_name}`})), ...expenses.map(e => ({...e, type: 'out', date: e.date, val: e.amount, label: e.description}))].sort((a,b) => new Date(b.date) - new Date(a.date)).map((t, i) => (<tr key={i} className="hover:bg-slate-50 transition-colors"><td className="p-4 text-slate-500">{new Date(t.date).toLocaleDateString()}</td><td className="p-4 font-bold text-slate-700 capitalize flex flex-col">{t.label} {t.type === 'out' && t.expense_categories && <span className="text-[10px] text-slate-400 font-normal uppercase bg-slate-100 w-fit px-1 rounded">{t.expense_categories.name}</span>}</td><td className={`p-4 text-right font-bold ${t.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>{t.type === 'in' ? '+' : '-'} R$ {Number(t.val).toFixed(2)}</td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => openEditModal(t.type === 'in' ? 'appointment' : 'expense', t)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded"><Pencil size={16}/></button><button onClick={() => handleDelete(t.type === 'in' ? 'appointments' : 'expenses', t.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
+                                {/* CORREÇÃO: Adicionado coluna Regional */}
+                                <table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-medium border-b border-gray-100"><tr><th className="p-4">Data</th><th className="p-4">Descrição</th>{selectedRegion === 'all' && <th className="p-4">Regional</th>}<th className="p-4 text-right">Valor</th><th className="p-4 text-center">Ações</th></tr></thead><tbody className="divide-y divide-gray-100">{[...appointments.map(a => ({...a, type: 'in', date: a.completed_at, val: a.gross_amount, label: `${a.vehicle_model} - ${a.customer_name}`})), ...expenses.map(e => ({...e, type: 'out', date: e.date, val: e.amount, label: e.description}))].sort((a,b) => new Date(b.date) - new Date(a.date)).map((t, i) => (<tr key={i} className="hover:bg-slate-50 transition-colors"><td className="p-4 text-slate-500">{new Date(t.date).toLocaleDateString()}</td><td className="p-4 font-bold text-slate-700 capitalize flex flex-col">{t.label} {t.type === 'out' && t.expense_categories && <span className="text-[10px] text-slate-400 font-normal uppercase bg-slate-100 w-fit px-1 rounded">{t.expense_categories.name}</span>}</td>{selectedRegion === 'all' && <td className="p-4 text-slate-500 uppercase text-xs">{t.region_id || 'Global'}</td>}<td className={`p-4 text-right font-bold ${t.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>{t.type === 'in' ? '+' : '-'} R$ {Number(t.val).toFixed(2)}</td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => openEditModal(t.type === 'in' ? 'appointment' : 'expense', t)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded"><Pencil size={16}/></button><button onClick={() => handleDelete(t.type === 'in' ? 'appointments' : 'expenses', t.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
                             </div>
                         </div>
                     )}
@@ -418,7 +419,8 @@ export default function AdminPage() {
                                 {commissionReport.map((rep, i) => (
                                     <div key={i} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 group relative">
                                         <button onClick={() => {
-                                            const installer = installers.find(inst => inst.full_name === rep.name || inst.email === rep.name);
+                                            // Correção: Encontrar por ID para garantir edição correta
+                                            const installer = installers.find(inst => inst.id === rep.id);
                                             if(installer) openEditModal('installer', installer);
                                         }} className="absolute top-4 right-4 text-slate-300 hover:text-blue-500"><Pencil size={16}/></button>
                                         <p className="font-bold text-slate-800 text-lg">{rep.name}</p>
@@ -426,7 +428,6 @@ export default function AdminPage() {
                                         <div className="border-t border-slate-200 pt-4 flex justify-between items-center"><span className="text-slate-400 text-xs font-medium">A Pagar</span><p className="text-2xl font-bold text-slate-900">R$ {rep.total.toFixed(2)}</p></div>
                                     </div>
                                 ))}
-                                {commissionReport.length === 0 && <div className="col-span-full py-12 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">Nenhuma atividade registrada nesta competência.</div>}
                             </div>
                         </div>
                     )}
@@ -448,11 +449,28 @@ export default function AdminPage() {
                         <div className="space-y-8">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                 <div className="space-y-6">
+                                    {/* CORREÇÃO: Lista de Contas Existentes */}
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                                        <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Banknote size={18} className="text-blue-600"/> Contas Cadastradas</h4>
+                                        <div className="space-y-3">
+                                            {accounts.map(acc => (
+                                                <div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border transition-all ${acc.is_default ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
+                                                    <div className="flex items-center gap-3">
+                                                        {acc.type === 'banco' && (<button onClick={() => handleSetDefault(acc.id)} className={`p-1.5 rounded-full transition-colors ${acc.is_default ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-400 hover:text-yellow-500'}`}><Star size={16} fill={acc.is_default ? "currentColor" : "none"} /></button>)}
+                                                        {acc.type === 'carteira' && <div className="w-7 h-7 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600"><Wallet size={14}/></div>}
+                                                        <div><p className={`font-bold text-sm ${acc.is_default ? 'text-blue-800' : 'text-slate-700'}`}>{acc.name} {acc.is_default && <span className="text-[10px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded ml-1 font-bold">PADRÃO</span>}</p><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">{acc.type === 'banco' ? 'Global' : `Regional ${acc.region_id || ''}`}</p></div>
+                                                    </div>
+                                                    <button onClick={() => handleDelete('accounts', acc.id)} className="text-slate-300 hover:text-red-500 p-2 transition-colors"><Trash2 size={16}/></button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
                                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                                         <h4 className="font-bold text-slate-800 mb-4 text-sm uppercase tracking-wide">Nova Conta</h4>
                                         <form onSubmit={handleAddAccount} className="space-y-4">
-                                            <div><label className="text-xs font-bold text-slate-500 mb-1 block">Nome</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newAccount.name} onChange={e => setNewAccount({...newAccount, name: e.target.value})} placeholder="Ex: Nubank" /></div>
-                                            <div className="grid grid-cols-2 gap-4"><div><label className="text-xs font-bold text-slate-500 mb-1 block">Tipo de Conta</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" value={newAccount.type} onChange={e => setNewAccount({...newAccount, type: e.target.value})}><option value="banco">Banco Global</option><option value="carteira">Caixa Regional</option></select></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Saldo Inicial</label><input type="number" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" value={newAccount.initial_balance} onChange={e => setNewAccount({...newAccount, initial_balance: e.target.value})} /></div></div>
+                                            <div><label className="text-xs font-bold text-slate-500 mb-1 block">Nome da Instituição</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" required value={newAccount.name} onChange={e => setNewAccount({...newAccount, name: e.target.value})} placeholder="Ex: Nubank" /></div>
+                                            <div className="grid grid-cols-2 gap-4"><div><label className="text-xs font-bold text-slate-500 mb-1 block">Tipo de Conta</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" value={newAccount.type} onChange={e => setNewAccount({...newAccount, type: e.target.value})}><option value="banco">Banco Global</option><option value="carteira">Caixa Regional</option></select></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Saldo Inicial</label><input type="number" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" value={newAccount.initial_balance} onChange={e => setNewAccount({...newAccount, initial_balance: e.target.value})} /></div></div>
                                             <button className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-colors">Criar Conta</button>
                                         </form>
                                     </div>
@@ -475,7 +493,7 @@ export default function AdminPage() {
         </main>
       </div>
       <BottomNav />
-      {/* MODAL DETALHES VISUALIZAÇÃO APENAS */}
+      {/* MODAL DETALHES */}
       {selectedTransaction && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
