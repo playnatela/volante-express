@@ -6,7 +6,7 @@ import {
   TrendingDown, Filter, Settings, Trash2, Banknote, Calendar, 
   Star, Package, Plus, Save, Eye, X, PieChart as PieIcon, 
   BarChart3, Users, LayoutDashboard, LogOut, Wallet, 
-  ArrowRightLeft, Pencil, MapPin
+  ArrowRightLeft, Pencil
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, 
@@ -37,7 +37,7 @@ export default function AdminPage() {
   const [installers, setInstallers] = useState([]);
   const [categories, setCategories] = useState([]);
 
-  // Modais e Estados
+  // Modais
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferData, setTransferData] = useState({ from: '', to: '', amount: '', date: new Date().toISOString().slice(0,10) });
   const [editingItem, setEditingItem] = useState(null);
@@ -82,7 +82,7 @@ export default function AdminPage() {
     const { data: exps } = await expQuery;
     setExpenses(exps || []);
 
-    // 3. Contas (Traz TODAS para a config, filtra visualmente nas outras abas)
+    // 3. Contas
     const { data: allAccs } = await supabase.from('accounts').select('*').order('name');
     setAccounts(allAccs || []);
 
@@ -107,7 +107,7 @@ export default function AdminPage() {
 
   // --- CRUD GERAL ---
   async function handleDelete(table, id) {
-    if(!confirm('Tem certeza?')) return;
+    if(!confirm('Tem certeza? Isso ajustará o saldo da conta automaticamente.')) return;
     const { error } = await supabase.from(table).delete().eq('id', id);
     if (error) alert('Erro: ' + error.message);
     else fetchData();
@@ -125,14 +125,29 @@ export default function AdminPage() {
     if (modalType === 'expense') table = 'expenses';
     if (modalType === 'installer') table = 'profiles';
 
-    // LIMPEZA CRÍTICA: Remove campos visuais que não existem no banco
     const payload = { ...editingItem };
     
-    // Lista de campos proibidos para envio ao Supabase
-    const forbiddenFields = [
-        'expense_categories', 'label', 'type', 'date', 'val', 'desc', 'email' // Email é gerido pelo Auth, evitar update aqui por segurança básica
-    ];
-    
+    // LOGICA CRÍTICA: Se for agendamento, recalcula o Líquido ao mudar o Bruto
+    if (modalType === 'appointment') {
+        const gross = parseFloat(payload.gross_amount);
+        // Tenta achar a taxa usada originalmente (snapshot) ou recalcula (menos preciso, mas ok pra edição)
+        const currentNet = parseFloat(payload.net_amount);
+        const currentGross = parseFloat(appointments.find(a => a.id === payload.id)?.gross_amount || 0);
+        
+        // Se mudou o valor bruto
+        if (gross !== currentGross) {
+            // Se tiver snapshot da taxa salvo, usa ele. Se não, tenta calcular proporcionalmente
+            let ratePercent = payload.payment_rate_snapshot || 0;
+            if (ratePercent === 0 && currentGross > 0) {
+                ratePercent = 100 - ((currentNet / currentGross) * 100);
+            }
+            // Novo Líquido
+            payload.net_amount = gross - (gross * (ratePercent / 100));
+        }
+    }
+
+    // Limpeza de campos virtuais
+    const forbiddenFields = ['expense_categories', 'label', 'type', 'date', 'val', 'desc', 'email'];
     forbiddenFields.forEach(field => delete payload[field]);
 
     const { error } = await supabase.from(table).update(payload).eq('id', editingItem.id);
@@ -185,7 +200,6 @@ export default function AdminPage() {
       setNewCategory(''); fetchData();
   }
 
-  // --- OUTROS ---
   async function handleSetDefault(accountId) { await supabase.from('accounts').update({ is_default: false }).is('region_id', null); await supabase.from('accounts').update({ is_default: true }).eq('id', accountId); fetchData(); }
   async function handleUpdateRate(rate) { await supabase.from('payment_rates').update({ rate_percent: rate.rate_percent }).eq('id', rate.id); setEditingRate(null); fetchData(); }
   async function handleAddInventory(e) { e.preventDefault(); const reg = selectedRegion === 'all' ? 'divinopolis' : selectedRegion; await supabase.from('inventory').insert([{ ...newItem, region_id: reg }]); setNewItem({ name: '', quantity: 0, min_threshold: 5 }); setShowAddForm(false); fetchData(); }
@@ -194,7 +208,7 @@ export default function AdminPage() {
 
   // --- CÁLCULOS ---
   const dashboardStats = useMemo(() => {
-    const totalIncome = appointments.reduce((acc, curr) => acc + (Number(curr.gross_amount) || Number(curr.amount) || 0), 0);
+    const totalGrossIncome = appointments.reduce((acc, curr) => acc + (Number(curr.gross_amount) || Number(curr.amount) || 0), 0);
     const totalNetIncome = appointments.reduce((acc, curr) => acc + (Number(curr.net_amount) || Number(curr.amount) || 0), 0);
     const totalExpense = expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
 
@@ -212,10 +226,15 @@ export default function AdminPage() {
     });
     const barData = Object.keys(clientsByDay).sort((a,b) => a.localeCompare(b)).map(k => ({ name: k, clientes: clientsByDay[k] }));
 
-    return { totalIncome, totalExpense, profit: totalNetIncome - totalExpense, pieData, barData };
+    return { 
+        totalGrossIncome, // Bruto
+        totalNetIncome,   // Líquido (Real que entra na conta)
+        totalExpense, 
+        profit: totalNetIncome - totalExpense, 
+        pieData, barData 
+    };
   }, [appointments, expenses]);
 
-  // CORREÇÃO: Equipe agora lista TODOS os instaladores, não só os com serviço
   const commissionReport = useMemo(() => {
     return installers.map(inst => {
         const myApps = appointments.filter(a => a.user_id === inst.id);
@@ -227,12 +246,13 @@ export default function AdminPage() {
             total: total,
             commission_rate: inst.commission_rate,
             full_name: inst.full_name,
-            email: inst.email
+            email: inst.email,
+            region_id: inst.region_id
         };
     });
   }, [appointments, installers]);
 
-  // Filtra contas para exibição no Dashboard e Financeiro (respeitando a Regional)
+  // Filtra contas para dashboard (respeitando a Regional)
   const displayAccounts = useMemo(() => {
       return accounts.filter(acc => selectedRegion === 'all' || acc.type === 'banco' || acc.region_id === selectedRegion);
   }, [accounts, selectedRegion]);
@@ -290,6 +310,7 @@ export default function AdminPage() {
                             <div><label className="text-xs font-bold text-slate-500">Veículo</label><input className="w-full p-3 border rounded-xl" value={editingItem.vehicle_model} onChange={e => setEditingItem({...editingItem, vehicle_model: e.target.value})} /></div>
                             <div><label className="text-xs font-bold text-slate-500">Cliente</label><input className="w-full p-3 border rounded-xl" value={editingItem.customer_name} onChange={e => setEditingItem({...editingItem, customer_name: e.target.value})} /></div>
                             <div><label className="text-xs font-bold text-slate-500">Valor Bruto (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.gross_amount} onChange={e => setEditingItem({...editingItem, gross_amount: e.target.value})} /></div>
+                            <p className="text-xs text-blue-500 bg-blue-50 p-2 rounded">ℹ️ O valor líquido e o saldo da conta serão recalculados automaticamente.</p>
                         </>
                     )}
                     {modalType === 'expense' && (
@@ -302,7 +323,6 @@ export default function AdminPage() {
                         <>
                             <div><label className="text-xs font-bold text-slate-500">Nome Completo</label><input className="w-full p-3 border rounded-xl" value={editingItem.full_name || ''} onChange={e => setEditingItem({...editingItem, full_name: e.target.value})} /></div>
                             <div><label className="text-xs font-bold text-slate-500">Comissão Padrão (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.commission_rate} onChange={e => setEditingItem({...editingItem, commission_rate: e.target.value})} /></div>
-                            <p className="text-xs text-amber-600 mt-2 bg-amber-50 p-2 rounded">* Alterar a comissão aqui mudará apenas para serviços FUTUROS.</p>
                         </>
                     )}
                 </div>
@@ -362,8 +382,9 @@ export default function AdminPage() {
                     {/* DASHBOARD */}
                     {activeTab === 'dashboard' && (
                         <>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-slate-500 text-sm font-medium">Receita Bruta</p><h3 className="text-3xl font-bold text-slate-900 mt-1">R$ {dashboardStats.totalIncome.toFixed(2)}</h3></div>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-slate-500 text-sm font-medium">Receita Bruta</p><h3 className="text-3xl font-bold text-slate-900 mt-1">R$ {dashboardStats.totalGrossIncome.toFixed(2)}</h3></div>
+                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-slate-500 text-sm font-medium">Receita Líquida (Real)</p><h3 className="text-3xl font-bold text-emerald-600 mt-1">R$ {dashboardStats.totalNetIncome.toFixed(2)}</h3></div>
                                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><p className="text-slate-500 text-sm font-medium">Despesas</p><h3 className="text-3xl font-bold text-red-600 mt-1">R$ {dashboardStats.totalExpense.toFixed(2)}</h3></div>
                                 <div className="bg-slate-900 p-6 rounded-2xl shadow-lg text-white"><p className="text-slate-400 text-sm font-medium flex justify-between">Lucro Líquido</p><h3 className="text-3xl font-bold mt-1">R$ {dashboardStats.profit.toFixed(2)}</h3></div>
                             </div>
@@ -391,7 +412,6 @@ export default function AdminPage() {
                         <div className="space-y-6">
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                                 <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-800 flex items-center gap-2"><Banknote size={20} className="text-blue-600"/> Saldos</h3><button onClick={() => setShowTransferModal(true)} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors"><ArrowRightLeft size={14}/> Transferir</button></div>
-                                {/* CORREÇÃO: Grid de 4 colunas em telas grandes */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">{displayAccounts.map(acc => (<div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{acc.type === 'banco' ? 'Banco Global' : `Caixa ${acc.region_id || 'Regional'}`}</p><p className="font-bold text-lg text-slate-900 truncate">{acc.name}</p><p className={`text-xl font-bold mt-1 ${Number(acc.balance) < 0 ? 'text-red-600' : 'text-slate-700'}`}>R$ {Number(acc.balance).toFixed(2)}</p></div>))}</div>
                             </div>
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -405,7 +425,6 @@ export default function AdminPage() {
                                 </form>
                             </div>
                             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                                {/* CORREÇÃO: Adicionado coluna Regional */}
                                 <table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-medium border-b border-gray-100"><tr><th className="p-4">Data</th><th className="p-4">Descrição</th>{selectedRegion === 'all' && <th className="p-4">Regional</th>}<th className="p-4 text-right">Valor</th><th className="p-4 text-center">Ações</th></tr></thead><tbody className="divide-y divide-gray-100">{[...appointments.map(a => ({...a, type: 'in', date: a.completed_at, val: a.gross_amount, label: `${a.vehicle_model} - ${a.customer_name}`})), ...expenses.map(e => ({...e, type: 'out', date: e.date, val: e.amount, label: e.description}))].sort((a,b) => new Date(b.date) - new Date(a.date)).map((t, i) => (<tr key={i} className="hover:bg-slate-50 transition-colors"><td className="p-4 text-slate-500">{new Date(t.date).toLocaleDateString()}</td><td className="p-4 font-bold text-slate-700 capitalize flex flex-col">{t.label} {t.type === 'out' && t.expense_categories && <span className="text-[10px] text-slate-400 font-normal uppercase bg-slate-100 w-fit px-1 rounded">{t.expense_categories.name}</span>}</td>{selectedRegion === 'all' && <td className="p-4 text-slate-500 uppercase text-xs">{t.region_id || 'Global'}</td>}<td className={`p-4 text-right font-bold ${t.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>{t.type === 'in' ? '+' : '-'} R$ {Number(t.val).toFixed(2)}</td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => openEditModal(t.type === 'in' ? 'appointment' : 'expense', t)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded"><Pencil size={16}/></button><button onClick={() => handleDelete(t.type === 'in' ? 'appointments' : 'expenses', t.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
                             </div>
                         </div>
@@ -419,7 +438,6 @@ export default function AdminPage() {
                                 {commissionReport.map((rep, i) => (
                                     <div key={i} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 group relative">
                                         <button onClick={() => {
-                                            // Correção: Encontrar por ID para garantir edição correta
                                             const installer = installers.find(inst => inst.id === rep.id);
                                             if(installer) openEditModal('installer', installer);
                                         }} className="absolute top-4 right-4 text-slate-300 hover:text-blue-500"><Pencil size={16}/></button>
@@ -449,7 +467,7 @@ export default function AdminPage() {
                         <div className="space-y-8">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                 <div className="space-y-6">
-                                    {/* CORREÇÃO: Lista de Contas Existentes */}
+                                    {/* LISTA DE CONTAS EXISTENTES */}
                                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                                         <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Banknote size={18} className="text-blue-600"/> Contas Cadastradas</h4>
                                         <div className="space-y-3">
