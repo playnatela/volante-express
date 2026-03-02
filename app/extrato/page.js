@@ -1,4 +1,5 @@
 'use client';
+import { useRouter } from 'next/navigation'; import { createBrowserClient } from '@supabase/ssr';
 
 import { Wallet, Calendar, TrendingUp, ListTodo, User, Package } from 'lucide-react';
 
