@@ -1,6 +1,7 @@
 'use client';
-import { useRouter } from 'next/navigation'; import { createBrowserClient } from '@supabase/ssr';
-
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { createBrowserClient } from '@supabase/ssr';
 import { Wallet, Calendar, TrendingUp, ListTodo, User, Package } from 'lucide-react';
 
 export default function ExtratoPage() {
