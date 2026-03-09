@@ -12,17 +12,21 @@ export async function POST(request) {
     const regionSlug = searchParams.get('region'); // ex: 'belo-horizonte'
     const forcedStatus = searchParams.get('status');
 
-    if (!regionSlug) return NextResponse.json({ error: 'Região não informada.' }, { status: 400 });
+    // A validação de região foi movida para as verificações de status
 
     const body = await request.json();
     
     // 1. BUSCA O INSTALADOR PADRÃO DA REGIÃO
     let assignedUserId = null;
-    const { data: regionData } = await supabase
-        .from('regions')
-        .select('default_user_id')
-        .eq('slug', regionSlug)
-        .single();
+    let regionData = null;
+    if (regionSlug) {
+        const { data } = await supabase
+            .from('regions')
+            .select('default_user_id')
+            .eq('slug', regionSlug)
+            .single();
+        regionData = data;
+    }
     
     if (regionData && regionData.default_user_id) {
         assignedUserId = regionData.default_user_id;
@@ -52,6 +56,11 @@ export async function POST(request) {
         } else if (['completed', 'finished', 'executed'].includes(statusLower)) {
             appStatus = 'concluido';
         }
+    }
+
+    // A região só é obrigatória se NÃO for um cancelamento
+    if (appStatus !== 'cancelado' && !regionSlug) {
+      return NextResponse.json({ error: 'Região não informada.' }, { status: 400 });
     }
 
     // 4. DADOS FINAIS
