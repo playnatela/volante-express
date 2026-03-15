@@ -6,7 +6,7 @@ import {
     TrendingDown, Filter, Settings, Trash2, Banknote, Calendar,
     Star, Package, Plus, Save, Eye, X, PieChart as PieIcon,
     BarChart3, Users, LayoutDashboard, LogOut, Wallet,
-    ArrowRightLeft, Pencil, TrendingUp, Smartphone, Trophy, ListTodo, Search
+    ArrowRightLeft, Pencil, TrendingUp, Smartphone, Trophy, ListTodo, Search, ChevronDown
 } from 'lucide-react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -45,6 +45,17 @@ export default function AdminPage() {
     const [atmFilterCoating, setAtmFilterCoating] = useState('all');
     const [atmFilterPayment, setAtmFilterPayment] = useState('all');
 
+    // Filtros Financeiro (Transações)
+    const [finSearchTerm, setFinSearchTerm] = useState('');
+    const [finFilterType, setFinFilterType] = useState('all');
+    const [finFilterCategory, setFinFilterCategory] = useState('all');
+    const [finFilterAccount, setFinFilterAccount] = useState('all');
+    const [finFilterRegion, setFinFilterRegion] = useState('all');
+
+    // Visibilidade dos Filtros (Toggles)
+    const [showAtmFilters, setShowAtmFilters] = useState(false);
+    const [showFinFilters, setShowFinFilters] = useState(false);
+
     // Modais e Forms
     const [showTransferModal, setShowTransferModal] = useState(false);
     const [transferData, setTransferData] = useState({ from: '', to: '', amount: '', date: new Date().toISOString().slice(0, 10) });
@@ -54,8 +65,9 @@ export default function AdminPage() {
     const [selectedTransaction, setSelectedTransaction] = useState(null);
 
     // Forms de Criação
+    const [showExpenseForm, setShowExpenseForm] = useState(false);
     const [newAccount, setNewAccount] = useState({ name: '', type: 'banco', initial_balance: 0 });
-    const [newExpense, setNewExpense] = useState({ description: '', amount: '', category_id: '', account_id: '' });
+    const [newExpense, setNewExpense] = useState({ description: '', amount: '', category_id: '', account_id: '', region_id: selectedRegion === 'all' ? 'matriz' : selectedRegion });
     const [newCategory, setNewCategory] = useState('');
     const [newItem, setNewItem] = useState({ name: '', quantity: 0, min_threshold: 5 });
     const [showAddForm, setShowAddForm] = useState(false);
@@ -64,13 +76,22 @@ export default function AdminPage() {
     const [editingRate, setEditingRate] = useState(null);
     const [isEditingInv, setIsEditingInv] = useState(null);
     const [editInvForm, setEditInvForm] = useState({});
+    const [invSortOrder, setInvSortOrder] = useState('qty_desc');
+
+    // Toggles Configurações
+    const [showAccountsSettings, setShowAccountsSettings] = useState(false);
+    const [showRatesSettings, setShowRatesSettings] = useState(false);
+    const [showCategoriesSettings, setShowCategoriesSettings] = useState(false);
 
     useEffect(() => { loadRegions(); }, []);
     useEffect(() => { fetchData(); }, [selectedRegion, activeTab, selectedMonth]);
 
     async function loadRegions() {
         const { data } = await supabase.from('regions').select('*');
-        if (data?.length) setRegions(data);
+        if (data?.length) {
+            if (!data.find(r => r.id === 'matriz')) data.push({ id: 'matriz', name: 'Matriz / Global' });
+            setRegions(data);
+        }
     }
 
     async function fetchData() {
@@ -79,33 +100,37 @@ export default function AdminPage() {
         const startOfMonth = new Date(Number(ano), Number(mes) - 1, 1).toISOString();
         const endOfMonth = new Date(Number(ano), Number(mes), 0, 23, 59, 59).toISOString();
 
-        // 1. Instalações e Agendamentos Futuros
+        // 1. Contas (Carregue primeiro para usar no filtro das regionais)
+        const { data: accsData } = await supabase.from('accounts').select('*').order('name');
+        const accs = accsData || [];
+        setAccounts(accs);
+
+        // 2. Instalações e Agendamentos Futuros
         let appQuery = supabase.from('appointments').select('*').gte('appointment_at', startOfMonth).lte('appointment_at', endOfMonth);
         let futureAppQuery = supabase.from('appointments').select('*')
             .neq('status', 'concluido')
             .neq('status', 'cancelado')
             .order('appointment_at', { ascending: true });
 
+        const { data: appsData } = await appQuery;
+        const { data: futureAppsData } = await futureAppQuery;
+        let apps = appsData || [];
+        let futureApps = futureAppsData || [];
+
+        // 3. Despesas
+        let expQuery = supabase.from('expenses').select('*, expense_categories(name)').gte('date', startOfMonth).lte('date', endOfMonth);
+        const { data: expsData } = await expQuery;
+        let exps = expsData || [];
+
         if (selectedRegion !== 'all') {
-            appQuery = appQuery.eq('region_id', selectedRegion);
-            futureAppQuery = futureAppQuery.eq('region_id', selectedRegion);
+            apps = apps.filter(a => (a.region_id || 'divinopolis') === selectedRegion);
+            futureApps = futureApps.filter(a => (a.region_id || 'divinopolis') === selectedRegion);
+            exps = exps.filter(e => (e.region_id || 'divinopolis') === selectedRegion);
         }
 
-        const { data: apps } = await appQuery;
-        const { data: futureApps } = await futureAppQuery;
-
-        setAppointments((apps || []).filter(a => a.status === 'concluido'));
-        setFutureAppointments(futureApps || []);
-
-        // 2. Despesas
-        let expQuery = supabase.from('expenses').select('*, expense_categories(name)').gte('date', startOfMonth).lte('date', endOfMonth);
-        if (selectedRegion !== 'all') expQuery = expQuery.eq('region_id', selectedRegion);
-        const { data: exps } = await expQuery;
-        setExpenses(exps || []);
-
-        // 3. Contas
-        const { data: accs } = await supabase.from('accounts').select('*').order('name');
-        setAccounts(accs || []);
+        setAppointments(apps.filter(a => a.status === 'concluido'));
+        setFutureAppointments(futureApps);
+        setExpenses(exps);
 
         // 4. Estoque
         let invQuery = supabase.from('inventory').select('*').order('name');
@@ -208,13 +233,14 @@ export default function AdminPage() {
 
     async function handleAddExpense(e) {
         e.preventDefault();
-        const reg = selectedRegion === 'all' ? 'divinopolis' : selectedRegion;
-        const { error } = await supabase.from('expenses').insert([{ ...newExpense, region_id: reg, date: new Date().toISOString() }]);
+        const acc = accounts.find(a => a.id === newExpense.account_id);
+        const { error } = await supabase.from('expenses').insert([{ ...newExpense, date: new Date().toISOString() }]);
         if (!error) {
-            const acc = accounts.find(a => a.id === newExpense.account_id);
             if (acc) await supabase.from('accounts').update({ balance: (acc.balance || 0) - Number(newExpense.amount) }).eq('id', newExpense.account_id);
-            setNewExpense({ description: '', amount: '', category_id: '', account_id: '' }); fetchData();
-        }
+            setNewExpense({ description: '', amount: '', category_id: '', account_id: '', region_id: selectedRegion === 'all' ? 'matriz' : selectedRegion });
+            fetchData();
+            alert('Despesa lançada!');
+        } else { alert('Erro: ' + error.message); }
     }
 
     async function handleAddCategory(e) { e.preventDefault(); await supabase.from('expense_categories').insert([{ name: newCategory }]); setNewCategory(''); fetchData(); }
@@ -373,13 +399,15 @@ export default function AdminPage() {
 
                             {activeTab === 'dashboard' && (
                                 <>
-                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                        <div className="bg-white p-5 rounded-2xl border border-gray-100"><p className="text-slate-500 text-xs font-bold uppercase">Faturamento Bruto</p><h3 className="text-2xl font-bold text-slate-900 mt-1">R$ {dashboardStats.totalGross.toFixed(2)}</h3></div>
-                                        <div className="bg-white p-5 rounded-2xl border border-gray-100"><p className="text-slate-500 text-xs font-bold uppercase">Ticket Médio</p><h3 className="text-2xl font-bold text-blue-600 mt-1">R$ {dashboardStats.ticketMedio.toFixed(2)}</h3></div>
-                                        <div className="bg-white p-5 rounded-2xl border border-gray-100"><p className="text-slate-500 text-xs font-bold uppercase">Despesas</p><h3 className="text-2xl font-bold text-red-600 mt-1">R$ {dashboardStats.totalExpense.toFixed(2)}</h3></div>
-                                        <div className="bg-slate-900 p-5 rounded-2xl shadow-lg text-white"><p className="text-slate-400 text-xs font-bold uppercase">Lucro Líquido</p><h3 className="text-2xl font-bold mt-1">R$ {dashboardStats.profit.toFixed(2)}</h3></div>
+                                    <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><TrendingUp size={20} className="text-blue-600" /> Balanço Financeiro</h3>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div className="bg-white p-5 rounded-2xl border border-gray-100 flex flex-col justify-between h-full"><p className="text-slate-500 text-[10px] sm:text-xs font-bold uppercase mb-2">Faturamento Bruto</p><h3 className="text-xl sm:text-2xl font-bold text-slate-900 truncate" title={`R$ ${dashboardStats.totalGross.toFixed(2)}`}>R$ {dashboardStats.totalGross.toFixed(2)}</h3></div>
+                                        <div className="bg-white p-5 rounded-2xl border border-gray-100 flex flex-col justify-between h-full"><p className="text-slate-500 text-[10px] sm:text-xs font-bold uppercase mb-2">Ticket Médio</p><h3 className="text-xl sm:text-2xl font-bold text-blue-600 truncate" title={`R$ ${dashboardStats.ticketMedio.toFixed(2)}`}>R$ {dashboardStats.ticketMedio.toFixed(2)}</h3></div>
+                                        <div className="bg-white p-5 rounded-2xl border border-gray-100 flex flex-col justify-between h-full"><p className="text-slate-500 text-[10px] sm:text-xs font-bold uppercase mb-2">Despesas</p><h3 className="text-xl sm:text-2xl font-bold text-red-600 truncate" title={`R$ ${dashboardStats.totalExpense.toFixed(2)}`}>R$ {dashboardStats.totalExpense.toFixed(2)}</h3></div>
+                                        <div className="bg-slate-900 p-5 rounded-2xl shadow-lg text-white flex flex-col justify-between h-full"><p className="text-slate-400 text-[10px] sm:text-xs font-bold uppercase mb-2">Lucro Líquido</p><h3 className="text-xl sm:text-2xl font-bold truncate" title={`R$ ${dashboardStats.profit.toFixed(2)}`}>R$ {dashboardStats.profit.toFixed(2)}</h3></div>
                                     </div>
 
+                                    <h3 className="font-bold text-slate-800 mt-8 mb-4 flex items-center gap-2"><ListTodo size={20} className="text-blue-600" /> Resumo de Atendimentos</h3>
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                                         <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center items-center text-center"><p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">Feitos no Mês</p><p className="text-2xl font-bold text-slate-800">{dashboardStats.feitosMes}</p></div>
                                         <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center items-center text-center"><p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">Feitos Ontem</p><p className="text-2xl font-bold text-slate-800">{dashboardStats.feitosOntem}</p></div>
@@ -387,7 +415,7 @@ export default function AdminPage() {
                                         <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center items-center text-center"><p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">Agendados (Futuros)</p><p className="text-2xl font-bold text-slate-800">{dashboardStats.agendadosFuturo}</p></div>
                                     </div>
 
-                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mt-8">
                                         <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Banknote size={20} className="text-blue-600" /> Saldos em Conta</h3>
                                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                                             {displayAccounts.map(acc => (
@@ -400,7 +428,7 @@ export default function AdminPage() {
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 lg:col-span-2 h-80">
                                             <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-xs uppercase tracking-wide"><TrendingUp size={16} /> Fluxo de Caixa (Dia a Dia)</h4>
                                             <ResponsiveContainer width="100%" height="85%">
@@ -418,53 +446,44 @@ export default function AdminPage() {
                                             </ResponsiveContainer>
                                         </div>
                                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
-                                            <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-xs uppercase tracking-wide"><Trophy size={16} /> Top Instaladores</h4>
+                                            <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-xs uppercase tracking-wide"><TrendingDown size={16} /> Despesas por Categoria</h4>
                                             <ResponsiveContainer width="100%" height="85%">
-                                                <BarChart data={dashboardStats.rankingData} layout="vertical">
-                                                    <XAxis type="number" hide />
-                                                    <YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
-                                                    <Tooltip cursor={{ fill: '#f8fafc' }} />
-                                                    <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} name="Serviços Realizados" />
-                                                </BarChart>
+                                                <PieChart>
+                                                    <Pie data={dashboardStats.pieDataExpenses} innerRadius={48} outerRadius={64} paddingAngle={5} dataKey="value">
+                                                        {dashboardStats.pieDataExpenses.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
+                                                    </Pie>
+                                                    <Tooltip formatter={(value) => `R$ ${Number(value).toFixed(2)} (${dashboardStats.totalExpense ? ((value / dashboardStats.totalExpense) * 100).toFixed(1) : 0}%)`} />
+                                                    <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" />
+                                                </PieChart>
                                             </ResponsiveContainer>
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
                                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
                                             <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-xs uppercase tracking-wide"><PieIcon size={16} /> Receita por Método</h4>
                                             <ResponsiveContainer width="100%" height="85%">
                                                 <PieChart>
-                                                    <Pie data={dashboardStats.pieDataIncome} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                                                    <Pie data={dashboardStats.pieDataIncome} innerRadius={48} outerRadius={64} paddingAngle={5} dataKey="value">
                                                         {dashboardStats.pieDataIncome.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
                                                     </Pie>
-                                                    <Tooltip formatter={(value) => `R$ ${value}`} />
+                                                    <Tooltip formatter={(value) => `R$ ${Number(value).toFixed(2)} (${dashboardStats.totalGross ? ((value / dashboardStats.totalGross) * 100).toFixed(1) : 0}%)`} />
                                                     <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" />
                                                 </PieChart>
                                             </ResponsiveContainer>
                                         </div>
-                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
-                                            <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-xs uppercase tracking-wide"><TrendingDown size={16} /> Despesas por Categoria</h4>
-                                            <ResponsiveContainer width="100%" height="85%">
-                                                <PieChart>
-                                                    <Pie data={dashboardStats.pieDataExpenses} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                                        {dashboardStats.pieDataExpenses.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
-                                                    </Pie>
-                                                    <Tooltip formatter={(value) => `R$ ${value}`} />
-                                                    <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" />
-                                                </PieChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
-                                            <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-xs uppercase tracking-wide"><Package size={16} /> Revestimentos Utilizados</h4>
-                                            <ResponsiveContainer width="100%" height="85%">
-                                                <PieChart>
-                                                    <Pie data={dashboardStats.pieDataCoatings} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+
+                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-[600px] md:col-span-2">
+                                            <h4 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-xs uppercase tracking-wide"><Package size={16} /> Comparativo de Revestimentos (Detalhado)</h4>
+                                            <ResponsiveContainer width="100%" height="90%">
+                                                <BarChart data={dashboardStats.pieDataCoatings} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
+                                                    <XAxis type="number" hide />
+                                                    <YAxis dataKey="name" type="category" width={110} tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                                                    <Tooltip cursor={{ fill: '#f8fafc' }} formatter={(value) => [`${value} (${dashboardStats.feitosMes ? ((value / dashboardStats.feitosMes) * 100).toFixed(1) : 0}%)`, 'Quantidade']} />
+                                                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24}>
                                                         {dashboardStats.pieDataCoatings.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
-                                                    </Pie>
-                                                    <Tooltip formatter={(value) => `${value} volantes`} />
-                                                    <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" />
-                                                </PieChart>
+                                                    </Bar>
+                                                </BarChart>
                                             </ResponsiveContainer>
                                         </div>
                                     </div>
@@ -486,27 +505,36 @@ export default function AdminPage() {
                                             </div>
                                         </div>
 
-                                        <div className="bg-slate-50 p-4 rounded-xl border border-gray-200 mb-6 grid grid-cols-1 md:grid-cols-4 gap-3">
-                                            <div className="relative">
-                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                                                <input type="text" placeholder="Buscar Cliente ou Veículo..." value={atmSearchTerm} onChange={(e) => setAtmSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-800 outline-none focus:border-blue-500" />
+                                        <div className="bg-slate-50 p-4 rounded-xl border border-gray-200 mb-6 flex flex-col gap-3">
+                                            <div className="flex gap-2 w-full">
+                                                <div className="relative flex-1">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                                    <input type="text" placeholder="Buscar Cliente ou Veículo..." value={atmSearchTerm} onChange={(e) => setAtmSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-800 outline-none focus:border-blue-500" />
+                                                </div>
+                                                <button onClick={() => setShowAtmFilters(!showAtmFilters)} className={`p-2 rounded-lg border flex items-center justify-center transition-colors ${showAtmFilters ? 'bg-blue-100 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-slate-600 hover:bg-slate-50'}`}>
+                                                    <Filter size={18} />
+                                                </button>
                                             </div>
-                                            <select value={atmFilterRegion} onChange={(e) => setAtmFilterRegion(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500">
-                                                <option value="all">Todas Regionais</option>
-                                                {regions.map(r => <option key={r.slug} value={r.slug}>{r.name}</option>)}
-                                            </select>
-                                            {atendimentosTab === 'realizados' && (
-                                                <>
-                                                    <select value={atmFilterCoating} onChange={(e) => setAtmFilterCoating(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500">
-                                                        <option value="all">Tipos de Revestimento</option>
-                                                        <option value="none">Nenhum / Avulso</option>
-                                                        {inventory.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                                            {showAtmFilters && (
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                    <select value={atmFilterRegion} onChange={(e) => setAtmFilterRegion(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500">
+                                                        <option value="all">Todas Regionais</option>
+                                                        {regions.map(r => <option key={r.slug} value={r.slug}>{r.name}</option>)}
                                                     </select>
-                                                    <select value={atmFilterPayment} onChange={(e) => setAtmFilterPayment(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500">
-                                                        <option value="all">Todas Formas Pagamento</option>
-                                                        <option value="pix">PIX</option><option value="dinheiro">Dinheiro</option><option value="debito">Débito</option><option value="credito">Crédito</option>
-                                                    </select>
-                                                </>
+                                                    {atendimentosTab === 'realizados' && (
+                                                        <>
+                                                            <select value={atmFilterCoating} onChange={(e) => setAtmFilterCoating(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500">
+                                                                <option value="all">Tipos de Revestimento</option>
+                                                                <option value="none">Nenhum / Avulso</option>
+                                                                {inventory.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                                                            </select>
+                                                            <select value={atmFilterPayment} onChange={(e) => setAtmFilterPayment(e.target.value)} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500">
+                                                                <option value="all">Todas Formas Pagamento</option>
+                                                                <option value="pix">PIX</option><option value="dinheiro">Dinheiro</option><option value="debito">Débito</option><option value="credito">Crédito</option>
+                                                            </select>
+                                                        </>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
 
@@ -532,7 +560,7 @@ export default function AdminPage() {
                                                                 ) : filteredFutureAppointments.map(a => (
                                                                     <tr key={a.id} className="hover:bg-slate-50 transition-colors">
                                                                         <td className="p-4 font-medium text-slate-700">
-                                                                            {new Date(a.appointment_at).toLocaleDateString()} <br />
+                                                                            {new Date(a.appointment_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} <br />
                                                                             <span className="text-xs text-slate-500">{new Date(a.appointment_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                                                         </td>
                                                                         <td className="p-4">
@@ -581,7 +609,7 @@ export default function AdminPage() {
                                                                 ) : filteredAppointments.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at)).map(a => (
                                                                     <tr key={a.id} className="hover:bg-slate-50 transition-colors">
                                                                         <td className="p-4 font-medium text-slate-700">
-                                                                            {new Date(a.completed_at).toLocaleDateString()} <br />
+                                                                            {new Date(a.completed_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} <br />
                                                                             <span className="text-xs text-slate-500">{new Date(a.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                                                         </td>
                                                                         <td className="p-4">
@@ -627,93 +655,158 @@ export default function AdminPage() {
                             {activeTab === 'financeiro' && (
                                 <div className="space-y-6">
                                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                                        <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-800 flex items-center gap-2"><Banknote size={20} className="text-blue-600" /> Saldos</h3><button onClick={() => setShowTransferModal(true)} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors"><ArrowRightLeft size={14} /> Transferir</button></div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">{displayAccounts.map(acc => (<div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{acc.type === 'banco' ? 'Global' : `Cx. ${acc.region_id || 'Regional'}`}</p><p className="font-bold text-lg text-slate-900 truncate">{acc.name}</p><p className={`text-xl font-bold mt-1 ${Number(acc.balance) < 0 ? 'text-red-600' : 'text-slate-700'}`}>R$ {Number(acc.balance).toFixed(2)}</p></div>))}</div>
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="font-bold text-slate-800 flex items-center gap-2"><TrendingDown className="text-red-500" size={20} /> Nova Despesa</h3>
+                                            <button onClick={() => setShowExpenseForm(!showExpenseForm)} className="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors">{showExpenseForm ? 'FECHAR' : 'ADICIONAR DESPESA'}</button>
+                                        </div>
+                                        {showExpenseForm && (
+                                            <form onSubmit={handleAddExpense} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end animate-in fade-in slide-in-from-top-2">
+                                                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Descrição</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.description} onChange={e => setNewExpense({ ...newExpense, description: e.target.value })} /></div>
+                                                <div><label className="text-xs font-bold text-slate-500 mb-1 block">Valor (R$)</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" type="number" step="0.01" required value={newExpense.amount} onChange={e => setNewExpense({ ...newExpense, amount: e.target.value })} /></div>
+                                                <div><label className="text-xs font-bold text-slate-500 mb-1 block">Categoria</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.category_id} onChange={e => setNewExpense({ ...newExpense, category_id: e.target.value })}><option value="">...</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                                                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Região Destino</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.region_id || (selectedRegion === 'all' ? 'matriz' : selectedRegion)} onChange={e => setNewExpense({ ...newExpense, region_id: e.target.value })}><option value="matriz">Matriz / Global</option>{regions.filter(r => r.id !== 'matriz').map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
+                                                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Conta de Saída</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.account_id} onChange={e => setNewExpense({ ...newExpense, account_id: e.target.value })}><option value="">Selecione a conta...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
+                                                <button className="w-full bg-red-600 text-white px-4 py-3 rounded-xl font-bold hover:bg-red-700">Lançar</button>
+                                            </form>
+                                        )}
                                     </div>
                                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                                        <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><TrendingDown className="text-red-500" size={20} /> Nova Despesa</h3>
-                                        <form onSubmit={handleAddExpense} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                                            <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Descrição</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.description} onChange={e => setNewExpense({ ...newExpense, description: e.target.value })} /></div>
-                                            <div><label className="text-xs font-bold text-slate-500 mb-1 block">Valor (R$)</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" type="number" step="0.01" required value={newExpense.amount} onChange={e => setNewExpense({ ...newExpense, amount: e.target.value })} /></div>
-                                            <div><label className="text-xs font-bold text-slate-500 mb-1 block">Categoria</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.category_id} onChange={e => setNewExpense({ ...newExpense, category_id: e.target.value })}><option value="">...</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                                            <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500 mb-1 block">Conta de Saída</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.account_id} onChange={e => setNewExpense({ ...newExpense, account_id: e.target.value })}><option value="">Selecione a conta...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
-                                            <button className="w-full bg-red-600 text-white px-4 py-3 rounded-xl font-bold hover:bg-red-700">Lançar</button>
-                                        </form>
+                                        <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-800 flex items-center gap-2"><Banknote size={20} className="text-blue-600" /> Saldos</h3><button onClick={() => setShowTransferModal(true)} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors"><ArrowRightLeft size={14} /> Transferir</button></div>
+                                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">{displayAccounts.map(acc => (<div key={acc.id} className={`p-4 rounded-xl border ${acc.is_default ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-gray-50 border-gray-200'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{acc.type === 'banco' ? 'Global' : `Cx. ${acc.region_id || 'Regional'}`}</p><p className="font-bold text-sm sm:text-lg text-slate-900 truncate" title={acc.name}>{acc.name}</p><p className={`text-sm sm:text-xl font-bold mt-1 ${Number(acc.balance) < 0 ? 'text-red-600' : 'text-slate-700'}`}>R$ {Number(acc.balance).toFixed(2)}</p></div>))}</div>
                                     </div>
                                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                                        <table className="w-full text-sm text-left">
-                                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-gray-100">
-                                                <tr>
-                                                    <th className="p-4">Data</th>
-                                                    <th className="p-4">Descrição</th>
-                                                    <th className="p-4">Conta</th>
-                                                    {selectedRegion === 'all' && <th className="p-4">Regional</th>}
-                                                    <th className="p-4 text-right">Valor</th>
-                                                    <th className="p-4 text-center">Ações</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-gray-100">
-                                                {[
-                                                    ...appointments.flatMap(a => {
-                                                        const primary = {
-                                                            ...a,
-                                                            type: 'in',
-                                                            date: a.completed_at,
-                                                            val: a.gross_amount,
-                                                            label: `${a.vehicle_model} - ${a.customer_name}`,
-                                                            account_name: accounts.find(acc => acc.id === a.account_id)?.name || 'Conta Removida',
-                                                            is_primary: true
-                                                        };
-                                                        if (a.is_split_payment) {
-                                                            const secondary = {
+                                        <div className="p-4 border-b border-gray-100 bg-gray-50 flex flex-col gap-4">
+                                            <div className="flex w-full gap-2">
+                                                <div className="flex-1 relative">
+                                                    <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                    <input type="text" placeholder="Buscar nas transações..." className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={finSearchTerm} onChange={e => setFinSearchTerm(e.target.value)} />
+                                                </div>
+                                                <button onClick={() => setShowFinFilters(!showFinFilters)} className={`p-2 rounded-xl border flex items-center justify-center transition-colors ${showFinFilters ? 'bg-blue-100 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-slate-600 hover:bg-slate-50'}`}>
+                                                    <Filter size={18} />
+                                                </button>
+                                            </div>
+                                            {showFinFilters && (
+                                                <div className="flex flex-wrap gap-2 w-full">
+                                                    <select className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-slate-600 outline-none" value={finFilterType} onChange={e => setFinFilterType(e.target.value)}>
+                                                        <option value="all">Todas as Movimentações</option>
+                                                        <option value="in">Receitas (Entradas)</option>
+                                                        <option value="out">Despesas (Saídas)</option>
+                                                    </select>
+                                                    <select className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-slate-600 outline-none" value={finFilterCategory} onChange={e => setFinFilterCategory(e.target.value)}>
+                                                        <option value="all">Todas as Categorias</option>
+                                                        {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                                                    </select>
+                                                    <select className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-slate-600 outline-none" value={finFilterAccount} onChange={e => setFinFilterAccount(e.target.value)}>
+                                                        <option value="all">Todas as Contas</option>
+                                                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                                    </select>
+                                                    {selectedRegion === 'all' && (
+                                                        <select className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-slate-600 outline-none" value={finFilterRegion} onChange={e => setFinFilterRegion(e.target.value)}>
+                                                            <option value="all">Todas as Regionais</option>
+                                                            {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                                        </select>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="overflow-x-auto w-full">
+                                            <table className="w-full text-sm text-left whitespace-nowrap">
+                                                <thead className="bg-slate-50 text-slate-500 font-medium border-b border-gray-100">
+                                                    <tr>
+                                                        <th className="p-4">Data</th>
+                                                        <th className="p-4 w-48 max-w-xs">Descrição</th>
+                                                        <th className="p-4 text-right">Valor</th>
+                                                        <th className="p-4">Conta</th>
+                                                        {selectedRegion === 'all' && <th className="p-4">Regional</th>}
+                                                        <th className="p-4 text-center">Ações</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100">
+                                                    {[
+                                                        ...appointments.flatMap(a => {
+                                                            const primaryAccount = accounts.find(acc => acc.id === a.account_id);
+                                                            const primary = {
                                                                 ...a,
                                                                 type: 'in',
                                                                 date: a.completed_at,
-                                                                val: a.gross_amount_2,
-                                                                label: `${a.vehicle_model} - ${a.customer_name} (Pagto 2)`,
-                                                                account_name: accounts.find(acc => acc.id === a.account_id_2)?.name || 'Conta Removida',
-                                                                is_primary: false
+                                                                val: a.gross_amount,
+                                                                label: `${a.vehicle_model} - ${a.customer_name}`,
+                                                                account_name: primaryAccount?.name || 'Conta Removida',
+                                                                account_region: primaryAccount?.region_id,
+                                                                is_primary: true
                                                             };
-                                                            return [primary, secondary];
+                                                            if (a.is_split_payment) {
+                                                                const secondaryAccount = accounts.find(acc => acc.id === a.account_id_2);
+                                                                const secondary = {
+                                                                    ...a,
+                                                                    type: 'in',
+                                                                    date: a.completed_at,
+                                                                    val: a.gross_amount_2,
+                                                                    label: `${a.vehicle_model} - ${a.customer_name} (Pagto 2)`,
+                                                                    account_name: secondaryAccount?.name || 'Conta Removida',
+                                                                    account_region: secondaryAccount?.region_id,
+                                                                    is_primary: false
+                                                                };
+                                                                return [primary, secondary];
+                                                            }
+                                                            return [primary];
+                                                        }),
+                                                        ...expenses.map(e => {
+                                                            const expAccount = accounts.find(acc => acc.id === e.account_id);
+                                                            return {
+                                                                ...e,
+                                                                type: 'out',
+                                                                date: e.date,
+                                                                val: e.amount,
+                                                                label: e.description,
+                                                                account_name: expAccount?.name || 'Conta Excluída',
+                                                                account_region: expAccount?.region_id
+                                                            };
+                                                        })
+                                                    ].sort((a, b) => new Date(b.date) - new Date(a.date)).filter(t => {
+                                                        let matches = true;
+                                                        if (finFilterType !== 'all' && t.type !== finFilterType) matches = false;
+                                                        if (finFilterCategory !== 'all') {
+                                                            if (t.type === 'in') matches = false; // Receitas não tem categoria (por enquanto)
+                                                            else if (t.expense_categories?.name !== finFilterCategory) matches = false;
                                                         }
-                                                        return [primary];
-                                                    }),
-                                                    ...expenses.map(e => ({
-                                                        ...e,
-                                                        type: 'out',
-                                                        date: e.date,
-                                                        val: e.amount,
-                                                        label: e.description,
-                                                        account_name: accounts.find(acc => acc.id === e.account_id)?.name || 'Conta Excluída'
-                                                    }))
-                                                ].sort((a, b) => new Date(b.date) - new Date(a.date)).map((t, i) => (
-                                                    <tr key={`${t.id}-${t.is_primary ? '1' : '2'}-${i}`} className="hover:bg-slate-50 transition-colors">
-                                                        <td className="p-4 text-slate-500">{new Date(t.date).toLocaleDateString()}</td>
-                                                        <td className="p-4 font-bold text-slate-700 capitalize flex flex-col">
-                                                            {t.label}
-                                                            {t.type === 'out' && t.expense_categories && <span className="text-[10px] text-slate-400 font-normal uppercase bg-slate-100 w-fit px-1 rounded">{t.expense_categories.name}</span>}
-                                                        </td>
-                                                        <td className="p-4">
-                                                            <span className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                                                                {t.account_name}
-                                                            </span>
-                                                        </td>
-                                                        {selectedRegion === 'all' && <td className="p-4 text-slate-500 uppercase text-xs">{t.region_id || 'Global'}</td>}
-                                                        <td className={`p-4 text-right font-bold ${t.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
-                                                            {t.type === 'in' ? '+' : '-'} R$ {Number(t.val).toFixed(2)}
-                                                        </td>
-                                                        <td className="p-4 text-center">
-                                                            <div className="flex justify-center gap-2">
-                                                                <button onClick={() => openEditModal(t.type === 'in' ? 'appointment' : 'expense', t)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded"><Pencil size={16} /></button>
-                                                                {t.is_primary !== false && (
-                                                                    <button onClick={() => handleDelete(t.type === 'in' ? 'appointments' : 'expenses', t.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
-                                                                )}
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
+                                                        if (finFilterAccount !== 'all' && t.account_id !== finFilterAccount && t.account_id_2 !== finFilterAccount) matches = false;
+                                                        if (selectedRegion === 'all' && finFilterRegion !== 'all' && (t.account_region || t.region_id) !== finFilterRegion) matches = false;
+                                                        if (finSearchTerm) {
+                                                            const term = finSearchTerm.toLowerCase();
+                                                            const searchString = `${t.label} ${t.account_name} ${t.val}`.toLowerCase();
+                                                            if (!searchString.includes(term)) matches = false;
+                                                        }
+                                                        return matches;
+                                                    }).map((t, i) => (
+                                                        <tr key={`${t.id}-${t.is_primary ? '1' : '2'}-${i}`} className="hover:bg-slate-50 transition-colors">
+                                                            <td className="p-4 text-slate-500">{new Date(t.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</td>
+                                                            <td className="p-4 font-bold text-slate-700 capitalize flex flex-col whitespace-normal break-words max-w-[200px]" title={t.label}>
+                                                                {t.label.length > 30 ? t.label.substring(0, 30) + '...' : t.label}
+                                                                {t.type === 'out' && t.expense_categories && <span className="text-[10px] text-slate-400 font-normal uppercase bg-slate-100 w-fit px-1 rounded mt-1">{t.expense_categories.name}</span>}
+                                                            </td>
+                                                            <td className={`p-4 text-right font-bold ${t.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                                {t.type === 'in' ? '+' : '-'} R$ {Number(t.val).toFixed(2)}
+                                                            </td>
+                                                            <td className="p-4">
+                                                                <span className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                                                    {t.account_name}
+                                                                </span>
+                                                            </td>
+                                                            {selectedRegion === 'all' && <td className="p-4 text-slate-500 uppercase text-xs">{t.account_region || t.region_id || 'Global'}</td>}
+                                                            <td className="p-4 text-center">
+                                                                <div className="flex justify-center gap-2">
+                                                                    <button onClick={() => openEditModal(t.type === 'in' ? 'appointment' : 'expense', t)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded"><Pencil size={16} /></button>
+                                                                    {t.is_primary !== false && (
+                                                                        <button onClick={() => handleDelete(t.type === 'in' ? 'appointments' : 'expenses', t.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -727,7 +820,25 @@ export default function AdminPage() {
 
                             {activeTab === 'estoque' && (
                                 <div className="space-y-6">
-                                    <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-gray-100"><div><h3 className="font-bold text-slate-700 flex items-center gap-2"><Package size={20} className="text-blue-600" /> Inventário {selectedRegion === 'all' ? 'Global' : selectedRegion}</h3></div>{selectedRegion !== 'all' && <button onClick={() => setShowAddForm(!showAddForm)} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-500"><Plus size={18} /> Adicionar</button>}</div>{showAddForm && (<form onSubmit={handleAddInventory} className="bg-slate-50 p-6 rounded-2xl grid grid-cols-4 gap-4 items-end border border-slate-200 animate-in slide-in-from-top-2"><div className="col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Item</label><input className="w-full p-3 border border-gray-200 rounded-xl" required value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Qtd Inicial</label><input className="w-full p-3 border border-gray-200 rounded-xl" type="number" required value={newItem.quantity} onChange={e => setNewItem({ ...newItem, quantity: e.target.value })} /></div><button className="bg-emerald-600 text-white p-3 rounded-xl font-bold hover:bg-emerald-500">Salvar</button></form>)}<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{inventory.map(item => (<div key={item.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center relative overflow-hidden group hover:border-blue-200 transition-colors">{item.quantity <= item.min_threshold && <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-red-500"></div>}<div><h4 className="font-bold text-slate-800 text-lg group-hover:text-blue-700 transition-colors">{item.name}</h4><span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded-md ${item.quantity <= item.min_threshold ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>{item.quantity <= item.min_threshold ? 'Repor Estoque' : 'Disponível'}</span></div><div className="text-right">{isEditingInv === item.id ? (<div className="flex items-center gap-2"><input className="w-16 p-2 border border-blue-200 bg-blue-50 rounded-lg text-center font-bold text-blue-700 outline-none" type="number" value={editInvForm.quantity} onChange={e => setEditInvForm({ ...editInvForm, quantity: e.target.value })} /><button onClick={() => handleUpdateInventory(item.id)} className="bg-emerald-100 text-emerald-700 p-2 rounded-lg hover:bg-emerald-200"><Save size={18} /></button></div>) : (<div className="flex flex-col items-end gap-1"><span className="text-4xl font-bold text-slate-900 tracking-tight">{item.quantity}</span><button onClick={() => { setIsEditingInv(item.id); setEditInvForm(item); }} className="text-xs text-blue-600 hover:text-blue-800 font-bold">Ajustar</button></div>)}</div></div>))}</div>
+                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-4 rounded-2xl shadow-sm border border-gray-100 gap-4">
+                                        <div><h3 className="font-bold text-slate-700 flex items-center gap-2"><Package size={20} className="text-blue-600" /> Inventário {selectedRegion === 'all' ? 'Global' : selectedRegion}</h3></div>
+                                        <div className="flex w-full md:w-auto gap-2">
+                                            <select className="flex-1 md:w-auto p-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 outline-none" value={invSortOrder} onChange={e => setInvSortOrder(e.target.value)}>
+                                                <option value="qty_desc">Mais Quantidade</option>
+                                                <option value="qty_asc">Menos Quantidade</option>
+                                                <option value="alpha">Ordem Alfabética</option>
+                                            </select>
+                                            {selectedRegion !== 'all' && <button onClick={() => setShowAddForm(!showAddForm)} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-500 whitespace-nowrap"><Plus size={18} /> Adicionar</button>}
+                                        </div>
+                                    </div>
+                                    {showAddForm && (<form onSubmit={handleAddInventory} className="bg-slate-50 p-6 rounded-2xl grid grid-cols-4 gap-4 items-end border border-slate-200 animate-in slide-in-from-top-2"><div className="col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Item</label><input className="w-full p-3 border border-gray-200 rounded-xl" required value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Qtd Inicial</label><input className="w-full p-3 border border-gray-200 rounded-xl" type="number" required value={newItem.quantity} onChange={e => setNewItem({ ...newItem, quantity: e.target.value })} /></div><button className="bg-emerald-600 text-white p-3 rounded-xl font-bold hover:bg-emerald-500">Salvar</button></form>)}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {[...inventory].sort((a, b) => {
+                                            if (invSortOrder === 'qty_desc') return b.quantity - a.quantity;
+                                            if (invSortOrder === 'qty_asc') return a.quantity - b.quantity;
+                                            return a.name.localeCompare(b.name);
+                                        }).map(item => (<div key={item.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center relative overflow-hidden group hover:border-blue-200 transition-colors">{item.quantity <= item.min_threshold && <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-red-500"></div>}<div><h4 className="font-bold text-slate-800 text-lg group-hover:text-blue-700 transition-colors">{item.name}</h4><span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded-md ${item.quantity <= item.min_threshold ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>{item.quantity <= item.min_threshold ? 'Repor Estoque' : 'Disponível'}</span></div><div className="text-right">{isEditingInv === item.id ? (<div className="flex items-center gap-2"><input className="w-16 p-2 border border-blue-200 bg-blue-50 rounded-lg text-center font-bold text-blue-700 outline-none" type="number" value={editInvForm.quantity} onChange={e => setEditInvForm({ ...editInvForm, quantity: e.target.value })} /><button onClick={() => handleUpdateInventory(item.id)} className="bg-emerald-100 text-emerald-700 p-2 rounded-lg hover:bg-emerald-200"><Save size={18} /></button></div>) : (<div className="flex flex-col items-end gap-1"><span className="text-4xl font-bold text-slate-900 tracking-tight">{item.quantity}</span><button onClick={() => { setIsEditingInv(item.id); setEditInvForm(item); }} className="text-xs text-blue-600 hover:text-blue-800 font-bold">Ajustar</button></div>)}</div></div>))}
+                                    </div>
                                 </div>
                             )}
 
@@ -735,21 +846,57 @@ export default function AdminPage() {
                                 <div className="space-y-8">
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                         <div className="space-y-6">
-                                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Banknote size={18} className="text-blue-600" /> Contas Cadastradas</h4><div className="space-y-3">{accounts.map(acc => (<div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border transition-all ${acc.is_default ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-300'}`}><div className="flex items-center gap-3">{acc.type === 'banco' && (<button onClick={() => handleSetDefault(acc.id)} className={`p-1.5 rounded-full transition-colors ${acc.is_default ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-400 hover:text-yellow-500'}`}><Star size={16} fill={acc.is_default ? "currentColor" : "none"} /></button>)}{acc.type === 'carteira' && <div className="w-7 h-7 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600"><Wallet size={14} /></div>}<div><p className={`font-bold text-sm ${acc.is_default ? 'text-blue-800' : 'text-slate-700'}`}>{acc.name} {acc.is_default && <span className="text-[10px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded ml-1 font-bold">PADRÃO</span>}</p><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">{acc.type === 'banco' ? 'Global' : `Regional ${acc.region_id || ''}`}</p></div></div><button onClick={() => handleDelete('accounts', acc.id)} className="text-slate-300 hover:text-red-500 p-2 transition-colors"><Trash2 size={16} /></button></div>))}</div></div>
-                                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><h4 className="font-bold text-slate-800 mb-4 text-sm uppercase tracking-wide">Nova Conta</h4><form onSubmit={handleAddAccount} className="space-y-4"><div><label className="text-xs font-bold text-slate-500 mb-1 block">Nome da Instituição</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" required value={newAccount.name} onChange={e => setNewAccount({ ...newAccount, name: e.target.value })} placeholder="Ex: Nubank" /></div><div className="grid grid-cols-2 gap-4"><div><label className="text-xs font-bold text-slate-500 mb-1 block">Tipo de Conta</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" value={newAccount.type} onChange={e => setNewAccount({ ...newAccount, type: e.target.value })}><option value="banco">Banco Global</option><option value="carteira">Caixa Regional</option></select></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Saldo Inicial</label><input type="number" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" value={newAccount.initial_balance} onChange={e => setNewAccount({ ...newAccount, initial_balance: e.target.value })} /></div></div><button className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-colors">Criar Conta</button></form></div>
-                                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><h4 className="font-bold text-slate-800 mb-4 text-sm uppercase tracking-wide">Categorias de Despesa</h4><div className="flex gap-2 mb-4"><input className="flex-1 p-2 border rounded-lg text-sm" placeholder="Nova Categoria..." value={newCategory} onChange={e => setNewCategory(e.target.value)} /><button onClick={handleAddCategory} className="bg-blue-600 text-white px-4 rounded-lg font-bold text-sm">Add</button></div><div className="flex flex-wrap gap-2">{categories.map(c => <span key={c.id} className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2">{c.name} <button onClick={() => handleDelete('expense_categories', c.id)} className="text-slate-400 hover:text-red-500"><X size={12} /></button></span>)}</div></div>
+                                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                                <button onClick={() => setShowAccountsSettings(!showAccountsSettings)} className="w-full p-6 flex justify-between items-center bg-white hover:bg-slate-50 transition-colors">
+                                                    <h4 className="font-bold text-slate-800 flex items-center gap-2"><Banknote size={18} className="text-blue-600" /> Contas & Caixas</h4>
+                                                    <ChevronDown size={20} className={`text-slate-400 transition-transform ${showAccountsSettings ? 'rotate-180' : ''}`} />
+                                                </button>
+                                                {showAccountsSettings && (
+                                                    <div className="p-6 pt-0 border-t border-gray-100">
+                                                        <div className="space-y-3 mb-6">{accounts.map(acc => (<div key={acc.id} className={`flex justify-between items-center p-3 rounded-xl border transition-all ${acc.is_default ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-300'}`}><div className="flex items-center gap-3">{acc.type === 'banco' && (<button onClick={() => handleSetDefault(acc.id)} className={`p-1.5 rounded-full transition-colors ${acc.is_default ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-400 hover:text-yellow-500'}`}><Star size={16} fill={acc.is_default ? "currentColor" : "none"} /></button>)}{acc.type === 'carteira' && <div className="w-7 h-7 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600"><Wallet size={14} /></div>}<div><p className={`font-bold text-sm ${acc.is_default ? 'text-blue-800' : 'text-slate-700'}`}>{acc.name} {acc.is_default && <span className="text-[10px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded ml-1 font-bold">PADRÃO</span>}</p><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">{acc.type === 'banco' ? 'Global' : `Regional ${acc.region_id || ''}`}</p></div></div><button onClick={() => handleDelete('accounts', acc.id)} className="text-slate-300 hover:text-red-500 p-2 transition-colors"><Trash2 size={16} /></button></div>))}</div>
+                                                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                                                            <h5 className="font-bold text-slate-700 text-xs uppercase tracking-wide mb-3">Nova Conta</h5>
+                                                            <form onSubmit={handleAddAccount} className="space-y-3"><div><label className="text-xs font-bold text-slate-500 mb-1 block">Nome da Instituição</label><input className="w-full p-2.5 bg-white border border-gray-200 rounded-lg focus:border-blue-500 outline-none text-sm" required value={newAccount.name} onChange={e => setNewAccount({ ...newAccount, name: e.target.value })} placeholder="Ex: Nubank / Caixa Físico" /></div><div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-slate-500 mb-1 block">Tipo de Conta</label><select className="w-full p-2.5 bg-white border border-gray-200 rounded-lg focus:border-blue-500 outline-none text-sm" value={newAccount.type} onChange={e => setNewAccount({ ...newAccount, type: e.target.value })}><option value="banco">Banco Global</option><option value="carteira">Caixa Regional</option></select></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Saldo Inicial</label><input type="number" step="0.01" className="w-full p-2.5 bg-white border border-gray-200 rounded-lg text-sm" value={newAccount.initial_balance} onChange={e => setNewAccount({ ...newAccount, initial_balance: e.target.value })} placeholder="Saldo Inicial..." /></div></div><button className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-lg text-sm hover:bg-slate-700 transition-colors">Criar Conta</button></form>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-fit"><h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Settings size={18} className="text-slate-400" /> Taxas da Maquininha</h4><div className="overflow-hidden rounded-xl border border-gray-100"><table className="w-full text-sm"><thead className="bg-slate-50 text-slate-500 font-medium"><tr><th className="p-3 text-left">Parcelamento</th><th className="p-3 text-right">Taxa (%)</th></tr></thead><tbody className="divide-y divide-gray-100">{rates.map(rate => (<tr key={rate.id} className="hover:bg-slate-50 transition-colors"><td className="p-3 font-medium text-slate-700 capitalize">{rate.method} {rate.installments > 1 && `${rate.installments}x`}</td><td className="p-3 text-right">{editingRate?.id === rate.id ? (<div className="flex justify-end gap-2"><input className="w-16 p-1 border border-blue-300 rounded text-center font-bold text-blue-600 outline-none" type="number" step="0.01" autoFocus value={editingRate.rate_percent} onChange={e => setEditingRate({ ...editingRate, rate_percent: e.target.value })} /><button onClick={() => handleUpdateRate(editingRate)} className="text-emerald-600 font-bold hover:text-emerald-700 text-xs">OK</button></div>) : (<button onClick={() => setEditingRate(rate)} className="text-slate-500 hover:text-blue-600 font-bold transition-colors border-b border-dashed border-slate-300 hover:border-blue-400">{rate.rate_percent}%</button>)}</td></tr>))}</tbody></table></div></div>
+                                        <div className="space-y-6">
+                                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                                <button onClick={() => setShowRatesSettings(!showRatesSettings)} className="w-full p-6 flex justify-between items-center bg-white hover:bg-slate-50 transition-colors">
+                                                    <h4 className="font-bold text-slate-800 flex items-center gap-2"><Settings size={18} className="text-slate-400" /> Taxas da Maquininha</h4>
+                                                    <ChevronDown size={20} className={`text-slate-400 transition-transform ${showRatesSettings ? 'rotate-180' : ''}`} />
+                                                </button>
+                                                {showRatesSettings && (
+                                                    <div className="p-6 pt-0 border-t border-gray-100">
+                                                        <div className="overflow-hidden rounded-xl border border-gray-100"><table className="w-full text-sm"><thead className="bg-slate-50 text-slate-500 font-medium"><tr><th className="p-3 text-left">Parcelamento</th><th className="p-3 text-right">Taxa (%)</th></tr></thead><tbody className="divide-y divide-gray-100">{rates.map(rate => (<tr key={rate.id} className="hover:bg-slate-50 transition-colors"><td className="p-3 font-medium text-slate-700 capitalize">{rate.method} {rate.installments > 1 && `${rate.installments}x`}</td><td className="p-3 text-right">{editingRate?.id === rate.id ? (<div className="flex justify-end gap-2"><input className="w-16 p-1 border border-blue-300 rounded text-center font-bold text-blue-600 outline-none" type="number" step="0.01" autoFocus value={editingRate.rate_percent} onChange={e => setEditingRate({ ...editingRate, rate_percent: e.target.value })} /><button onClick={() => handleUpdateRate(editingRate)} className="text-emerald-600 font-bold hover:text-emerald-700 text-xs">OK</button></div>) : (<button onClick={() => setEditingRate(rate)} className="text-slate-500 hover:text-blue-600 font-bold transition-colors border-b border-dashed border-slate-300 hover:border-blue-400">{rate.rate_percent}%</button>)}</td></tr>))}</tbody></table></div>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                                <button onClick={() => setShowCategoriesSettings(!showCategoriesSettings)} className="w-full p-6 flex justify-between items-center bg-white hover:bg-slate-50 transition-colors">
+                                                    <h4 className="font-bold text-slate-800 flex items-center gap-2"><PieIcon size={18} className="text-purple-500" /> Categorias de Despesa</h4>
+                                                    <ChevronDown size={20} className={`text-slate-400 transition-transform ${showCategoriesSettings ? 'rotate-180' : ''}`} />
+                                                </button>
+                                                {showCategoriesSettings && (
+                                                    <div className="p-6 pt-0 border-t border-gray-100">
+                                                        <div className="flex gap-2 mb-4"><input className="flex-1 p-2 border rounded-lg text-sm bg-slate-50" placeholder="Nova Categoria..." value={newCategory} onChange={e => setNewCategory(e.target.value)} /><button onClick={handleAddCategory} className="bg-blue-600 text-white px-4 rounded-lg font-bold text-sm">Add</button></div><div className="flex flex-wrap gap-2">{categories.map(c => <span key={c.id} className="bg-slate-100 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2">{c.name} <button onClick={() => handleDelete('expense_categories', c.id)} className="text-slate-400 hover:text-red-500 bg-white p-0.5 rounded shadow-sm"><X size={12} /></button></span>)}</div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             )}
                         </div>
                     )}
                 </main>
-            </div>
+            </div >
 
             {/* COMPONENTES EXTRAS (Modais e Navegação) */}
-            <BottomNav />
+            < BottomNav />
 
             {showEditModal && editingItem && (<div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"><div className={`bg-white rounded-2xl w-full ${modalType === 'appointment' ? 'max-w-xl' : 'max-w-md'} p-6 shadow-2xl animate-in zoom-in-95 max-h-[90vh] overflow-y-auto`}><h3 className="text-xl font-bold mb-4 text-slate-900 flex items-center gap-2"><Pencil size={20} /> Editar Item</h3><div className="space-y-4">{modalType === 'appointment' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -814,9 +961,10 @@ export default function AdminPage() {
                         <p className="text-[10px] text-slate-500 bg-slate-100 p-2 rounded-lg leading-tight mt-2 border border-slate-200">Valores líquidos recalculam sozinhos. Alterar revestimento <strong className="text-red-500">não afeta o estoque</strong> automaticamente.</p>
                     </div>
                 </div>
-            )}{modalType === 'expense' && (<><div><label className="text-xs font-bold text-slate-500">Descrição</label><input className="w-full p-3 border rounded-xl" value={editingItem.description} onChange={e => setEditingItem({ ...editingItem, description: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Valor (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.amount} onChange={e => setEditingItem({ ...editingItem, amount: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Conta Origem</label><select className="w-full p-3 border rounded-xl" value={editingItem.account_id} onChange={e => setEditingItem({ ...editingItem, account_id: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div></>)}{modalType === 'installer' && (<><div><label className="text-xs font-bold text-slate-500">Nome Completo</label><input className="w-full p-3 border rounded-xl" value={editingItem.full_name || ''} onChange={e => setEditingItem({ ...editingItem, full_name: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Comissão Padrão (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.commission_rate} onChange={e => setEditingItem({ ...editingItem, commission_rate: e.target.value })} /></div></>)}</div><div className="flex gap-3 mt-6"><button onClick={() => setShowEditModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl">Cancelar</button><button onClick={handleSaveEdit} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500">Salvar Alterações</button></div></div></div>)}
+            )}{modalType === 'expense' && (<><div><label className="text-xs font-bold text-slate-500">Descrição</label><input className="w-full p-3 border rounded-xl" value={editingItem.description} onChange={e => setEditingItem({ ...editingItem, description: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Valor (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.amount} onChange={e => setEditingItem({ ...editingItem, amount: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Conta Origem</label><select className="w-full p-3 border rounded-xl" value={editingItem.account_id} onChange={e => setEditingItem({ ...editingItem, account_id: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div></>)}{modalType === 'installer' && (<><div><label className="text-xs font-bold text-slate-500">Nome Completo</label><input className="w-full p-3 border rounded-xl" value={editingItem.full_name || ''} onChange={e => setEditingItem({ ...editingItem, full_name: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Comissão Padrão (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.commission_rate} onChange={e => setEditingItem({ ...editingItem, commission_rate: e.target.value })} /></div></>)}</div><div className="flex gap-3 mt-6"><button onClick={() => setShowEditModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl">Cancelar</button><button onClick={handleSaveEdit} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500">Salvar Alterações</button></div></div></div>)
+            }
             {showTransferModal && (<div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"><div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95"><h3 className="text-lg font-bold mb-4 text-slate-900 flex items-center gap-2"><ArrowRightLeft size={20} /> Transferência</h3><form onSubmit={handleTransfer} className="space-y-4"><div><label className="text-xs font-bold text-slate-500">De (Origem)</label><select className="w-full p-3 border rounded-xl" required onChange={e => setTransferData({ ...transferData, from: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name} (R$ {Number(a.balance).toFixed(2)})</option>)}</select></div><div><label className="text-xs font-bold text-slate-500">Para (Destino)</label><select className="w-full p-3 border rounded-xl" required onChange={e => setTransferData({ ...transferData, to: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div><div><label className="text-xs font-bold text-slate-500">Valor (R$)</label><input type="number" step="0.01" className="w-full p-3 border rounded-xl" required onChange={e => setTransferData({ ...transferData, amount: e.target.value })} /></div><button className="w-full py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-500 mt-2">Confirmar</button><button type="button" onClick={() => setShowTransferModal(false)} className="w-full py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">Cancelar</button></form></div></div>)}
             {selectedTransaction && (<div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200"><div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"><div className="p-5 bg-slate-900 text-white flex justify-between items-center"><h3 className="font-bold text-lg flex items-center gap-2"><Eye size={18} className="text-blue-400" /> Detalhes</h3><button onClick={() => setSelectedTransaction(null)} className="p-2 hover:bg-slate-700 rounded-full transition-colors"><X size={20} /></button></div><div className="overflow-y-auto p-6 space-y-6">{selectedTransaction.photo_url ? (<div className="rounded-2xl overflow-hidden border-4 border-slate-100 bg-slate-50 shadow-inner"><img src={selectedTransaction.photo_url} alt="Comprovante" className="w-full h-auto object-cover" /></div>) : <div className="h-32 bg-slate-50 rounded-2xl flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-200"><Eye size={32} className="mb-2 opacity-50" /><span className="text-xs font-medium">Sem foto</span></div>}<div className="space-y-4"><div className="flex justify-between items-start border-b border-slate-100 pb-4"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Veículo / Cliente</p><p className="font-bold text-xl text-slate-900">{selectedTransaction.vehicle_model}</p><p className="text-sm text-slate-500">{selectedTransaction.customer_name}</p></div><div className="text-right"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Valor Bruto</p><p className="font-bold text-xl text-emerald-600">R$ {Number(selectedTransaction.gross_amount || selectedTransaction.amount).toFixed(2)}</p></div></div><div className="grid grid-cols-2 gap-4"><div className="bg-slate-50 p-3 rounded-xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Método</p><p className="font-medium text-slate-700 capitalize">{selectedTransaction.payment_method}</p></div><div className="bg-slate-50 p-3 rounded-xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Parcelas</p><p className="font-medium text-slate-700">{selectedTransaction.installments}x</p></div>{selectedTransaction.net_amount && <div className="bg-blue-50 p-3 rounded-xl col-span-2 border border-blue-100"><p className="text-[10px] font-bold text-blue-400 uppercase">Líquido (Empresa)</p><p className="font-bold text-blue-700 text-lg">R$ {Number(selectedTransaction.net_amount).toFixed(2)}</p></div>}{selectedTransaction.commission_amount > 0 && <div className="bg-emerald-50 p-3 rounded-xl col-span-2 border border-emerald-100"><p className="text-[10px] font-bold text-emerald-500 uppercase">Comissão (Instalador)</p><p className="font-bold text-emerald-700 text-lg">R$ {Number(selectedTransaction.commission_amount).toFixed(2)}</p></div>}</div></div></div></div></div>)}
-        </div>
+        </div >
     );
 }
