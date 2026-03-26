@@ -67,7 +67,7 @@ export default function AdminPage() {
     // Forms de Criação
     const [showExpenseForm, setShowExpenseForm] = useState(false);
     const [newAccount, setNewAccount] = useState({ name: '', type: 'banco', initial_balance: 0 });
-    const [newExpense, setNewExpense] = useState({ description: '', amount: '', category_id: '', account_id: '', region_id: selectedRegion === 'all' ? 'matriz' : selectedRegion });
+    const [newExpense, setNewExpense] = useState({ description: '', amount: '', category_id: '', account_id: '', region_id: selectedRegion === 'all' ? 'matriz' : selectedRegion, date: new Date().toISOString().slice(0, 10) });
     const [newCategory, setNewCategory] = useState('');
     const [newItem, setNewItem] = useState({ name: '', quantity: 0, min_threshold: 5 });
     const [showAddForm, setShowAddForm] = useState(false);
@@ -89,7 +89,7 @@ export default function AdminPage() {
     async function loadRegions() {
         const { data } = await supabase.from('regions').select('*');
         if (data?.length) {
-            if (!data.find(r => r.id === 'matriz')) data.push({ id: 'matriz', name: 'Matriz / Global' });
+            if (!data.find(r => r.slug === 'matriz')) data.push({ slug: 'matriz', name: 'Matriz / Global' });
             setRegions(data);
         }
     }
@@ -174,6 +174,27 @@ export default function AdminPage() {
         if (modalType === 'appointment') {
             const originalAppointment = appointments.find(a => a.id === payload.id) || {};
 
+            // 0. Handle Inventory adjustment if coating changed on a completed appointment
+            const oldId = String(originalAppointment.material_used_id || '').trim();
+            const newId = String(payload.material_used_id || '').trim();
+            
+            if (originalAppointment.status === 'concluido' && newId !== oldId) {
+                // Restore old material
+                if (originalAppointment.material_used_id) {
+                    const { data: oldMat } = await supabase.from('inventory').select('quantity').eq('id', originalAppointment.material_used_id).single();
+                    if (oldMat) {
+                        await supabase.from('inventory').update({ quantity: (oldMat.quantity || 0) + 1 }).eq('id', originalAppointment.material_used_id);
+                    }
+                }
+                // Consume new material
+                if (payload.material_used_id) {
+                    const { data: newMat } = await supabase.from('inventory').select('quantity').eq('id', payload.material_used_id).single();
+                    if (newMat) {
+                        await supabase.from('inventory').update({ quantity: (newMat.quantity || 0) - 1 }).eq('id', payload.material_used_id);
+                    }
+                }
+            }
+
             // 1. Handle Primary Payment Recalculation
             const gross1 = parseFloat(payload.gross_amount || 0);
             const currentGross1 = parseFloat(originalAppointment.gross_amount || 0);
@@ -202,7 +223,10 @@ export default function AdminPage() {
             }
         }
 
-        ['expense_categories', 'label', 'type', 'date', 'val', 'desc', 'email', 'account_name', 'is_primary', '_new_account_id', '_new_account_id_2'].forEach(f => delete payload[f]);
+        const fieldsToDelete = ['expense_categories', 'label', 'type', 'val', 'desc', 'email', 'account_name', 'account_region', 'is_primary', '_new_account_id', '_new_account_id_2'];
+        if (table !== 'expenses') fieldsToDelete.push('date');
+        if (payload.region_id === 'matriz') payload.region_id = null;
+        fieldsToDelete.forEach(f => delete payload[f]);
 
         const { error } = await supabase.from(table).update(payload).eq('id', editingItem.id);
         if (error) alert('Erro: ' + error.message);
@@ -234,10 +258,12 @@ export default function AdminPage() {
     async function handleAddExpense(e) {
         e.preventDefault();
         const acc = accounts.find(a => a.id === newExpense.account_id);
-        const { error } = await supabase.from('expenses').insert([{ ...newExpense, date: new Date().toISOString() }]);
+        const expensePayload = { ...newExpense, date: newExpense.date ? newExpense.date + 'T12:00:00Z' : new Date().toISOString() };
+        if (expensePayload.region_id === 'matriz') expensePayload.region_id = null;
+        const { error } = await supabase.from('expenses').insert([expensePayload]);
         if (!error) {
             if (acc) await supabase.from('accounts').update({ balance: (acc.balance || 0) - Number(newExpense.amount) }).eq('id', newExpense.account_id);
-            setNewExpense({ description: '', amount: '', category_id: '', account_id: '', region_id: selectedRegion === 'all' ? 'matriz' : selectedRegion });
+            setNewExpense({ description: '', amount: '', category_id: '', account_id: '', region_id: selectedRegion === 'all' ? 'matriz' : selectedRegion, date: new Date().toISOString().slice(0, 10) });
             fetchData();
             alert('Despesa lançada!');
         } else { alert('Erro: ' + error.message); }
@@ -662,9 +688,10 @@ export default function AdminPage() {
                                         {showExpenseForm && (
                                             <form onSubmit={handleAddExpense} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end animate-in fade-in slide-in-from-top-2">
                                                 <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Descrição</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.description} onChange={e => setNewExpense({ ...newExpense, description: e.target.value })} /></div>
+                                                <div><label className="text-xs font-bold text-slate-500 mb-1 block">Data</label><input type="date" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.date} onChange={e => setNewExpense({ ...newExpense, date: e.target.value })} /></div>
                                                 <div><label className="text-xs font-bold text-slate-500 mb-1 block">Valor (R$)</label><input className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" type="number" step="0.01" required value={newExpense.amount} onChange={e => setNewExpense({ ...newExpense, amount: e.target.value })} /></div>
                                                 <div><label className="text-xs font-bold text-slate-500 mb-1 block">Categoria</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.category_id} onChange={e => setNewExpense({ ...newExpense, category_id: e.target.value })}><option value="">...</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                                                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Região Destino</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.region_id || (selectedRegion === 'all' ? 'matriz' : selectedRegion)} onChange={e => setNewExpense({ ...newExpense, region_id: e.target.value })}><option value="matriz">Matriz / Global</option>{regions.filter(r => r.id !== 'matriz').map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
+                                                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Região Destino</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.region_id || (selectedRegion === 'all' ? 'matriz' : selectedRegion)} onChange={e => setNewExpense({ ...newExpense, region_id: e.target.value })}><option value="matriz">Matriz / Global</option>{regions.filter(r => r.slug !== 'matriz').map(r => <option key={r.slug} value={r.slug}>{r.name}</option>)}</select></div>
                                                 <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 mb-1 block">Conta de Saída</label><select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl" required value={newExpense.account_id} onChange={e => setNewExpense({ ...newExpense, account_id: e.target.value })}><option value="">Selecione a conta...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
                                                 <button className="w-full bg-red-600 text-white px-4 py-3 rounded-xl font-bold hover:bg-red-700">Lançar</button>
                                             </form>
@@ -703,7 +730,7 @@ export default function AdminPage() {
                                                     {selectedRegion === 'all' && (
                                                         <select className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-slate-600 outline-none" value={finFilterRegion} onChange={e => setFinFilterRegion(e.target.value)}>
                                                             <option value="all">Todas as Regionais</option>
-                                                            {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                                            {regions.map(r => <option key={r.slug} value={r.slug}>{r.name}</option>)}
                                                         </select>
                                                     )}
                                                 </div>
@@ -902,6 +929,9 @@ export default function AdminPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-3">
                         <h4 className="font-bold text-slate-600 text-[10px] tracking-wider uppercase border-b border-gray-100 pb-1 mb-2">Serviço</h4>
+                        {editingItem.status === 'concluido' && (
+                            <div><label className="text-[10px] font-bold uppercase text-slate-500">Data Conclusão</label><input type="datetime-local" className="w-full p-2 border border-slate-200 bg-slate-50 rounded-lg text-sm text-slate-800" value={editingItem.completed_at ? editingItem.completed_at.slice(0, 16) : ''} onChange={e => setEditingItem({ ...editingItem, completed_at: e.target.value + ':00Z' })} /></div>
+                        )}
                         <div><label className="text-[10px] font-bold uppercase text-slate-500">Veículo</label><input className="w-full p-2 border border-slate-200 bg-slate-50 rounded-lg text-sm text-slate-800" value={editingItem.vehicle_model || ''} onChange={e => setEditingItem({ ...editingItem, vehicle_model: e.target.value })} /></div>
                         <div><label className="text-[10px] font-bold uppercase text-slate-500">Cliente</label><input className="w-full p-2 border border-slate-200 bg-slate-50 rounded-lg text-sm text-slate-800" value={editingItem.customer_name || ''} onChange={e => setEditingItem({ ...editingItem, customer_name: e.target.value })} /></div>
                         <div>
@@ -958,10 +988,10 @@ export default function AdminPage() {
                                 </div>
                             </div>
                         )}
-                        <p className="text-[10px] text-slate-500 bg-slate-100 p-2 rounded-lg leading-tight mt-2 border border-slate-200">Valores líquidos recalculam sozinhos. Alterar revestimento <strong className="text-red-500">não afeta o estoque</strong> automaticamente.</p>
+                        <p className="text-[10px] text-slate-500 bg-slate-100 p-2 rounded-lg leading-tight mt-2 border border-slate-200">Valores líquidos recalculam sozinhos. Alterar revestimento <strong className="text-emerald-600">agora atualiza o estoque</strong> automaticamente.</p>
                     </div>
                 </div>
-            )}{modalType === 'expense' && (<><div><label className="text-xs font-bold text-slate-500">Descrição</label><input className="w-full p-3 border rounded-xl" value={editingItem.description} onChange={e => setEditingItem({ ...editingItem, description: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Valor (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.amount} onChange={e => setEditingItem({ ...editingItem, amount: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Conta Origem</label><select className="w-full p-3 border rounded-xl" value={editingItem.account_id} onChange={e => setEditingItem({ ...editingItem, account_id: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div></>)}{modalType === 'installer' && (<><div><label className="text-xs font-bold text-slate-500">Nome Completo</label><input className="w-full p-3 border rounded-xl" value={editingItem.full_name || ''} onChange={e => setEditingItem({ ...editingItem, full_name: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Comissão Padrão (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.commission_rate} onChange={e => setEditingItem({ ...editingItem, commission_rate: e.target.value })} /></div></>)}</div><div className="flex gap-3 mt-6"><button onClick={() => setShowEditModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl">Cancelar</button><button onClick={handleSaveEdit} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500">Salvar Alterações</button></div></div></div>)
+            )}{modalType === 'expense' && (<><div><label className="text-xs font-bold text-slate-500">Descrição</label><input className="w-full p-3 border rounded-xl" value={editingItem.description} onChange={e => setEditingItem({ ...editingItem, description: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Data</label><input type="date" className="w-full p-3 border rounded-xl" value={editingItem.date ? editingItem.date.slice(0, 10) : ''} onChange={e => setEditingItem({ ...editingItem, date: e.target.value + 'T12:00:00Z' })} /></div><div><label className="text-xs font-bold text-slate-500">Valor (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.amount} onChange={e => setEditingItem({ ...editingItem, amount: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Conta Origem</label><select className="w-full p-3 border rounded-xl" value={editingItem.account_id} onChange={e => setEditingItem({ ...editingItem, account_id: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div></>)}{modalType === 'installer' && (<><div><label className="text-xs font-bold text-slate-500">Nome Completo</label><input className="w-full p-3 border rounded-xl" value={editingItem.full_name || ''} onChange={e => setEditingItem({ ...editingItem, full_name: e.target.value })} /></div><div><label className="text-xs font-bold text-slate-500">Comissão Padrão (R$)</label><input type="number" className="w-full p-3 border rounded-xl" value={editingItem.commission_rate} onChange={e => setEditingItem({ ...editingItem, commission_rate: e.target.value })} /></div></>)}</div><div className="flex gap-3 mt-6"><button onClick={() => setShowEditModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl">Cancelar</button><button onClick={(e) => { e.currentTarget.disabled = true; e.currentTarget.innerText = 'Salvando...'; handleSaveEdit(); }} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500 disabled:opacity-50">Salvar Alterações</button></div></div></div>)
             }
             {showTransferModal && (<div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"><div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95"><h3 className="text-lg font-bold mb-4 text-slate-900 flex items-center gap-2"><ArrowRightLeft size={20} /> Transferência</h3><form onSubmit={handleTransfer} className="space-y-4"><div><label className="text-xs font-bold text-slate-500">De (Origem)</label><select className="w-full p-3 border rounded-xl" required onChange={e => setTransferData({ ...transferData, from: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name} (R$ {Number(a.balance).toFixed(2)})</option>)}</select></div><div><label className="text-xs font-bold text-slate-500">Para (Destino)</label><select className="w-full p-3 border rounded-xl" required onChange={e => setTransferData({ ...transferData, to: e.target.value })}><option value="">Selecione...</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div><div><label className="text-xs font-bold text-slate-500">Valor (R$)</label><input type="number" step="0.01" className="w-full p-3 border rounded-xl" required onChange={e => setTransferData({ ...transferData, amount: e.target.value })} /></div><button className="w-full py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-500 mt-2">Confirmar</button><button type="button" onClick={() => setShowTransferModal(false)} className="w-full py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">Cancelar</button></form></div></div>)}
             {selectedTransaction && (<div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200"><div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"><div className="p-5 bg-slate-900 text-white flex justify-between items-center"><h3 className="font-bold text-lg flex items-center gap-2"><Eye size={18} className="text-blue-400" /> Detalhes</h3><button onClick={() => setSelectedTransaction(null)} className="p-2 hover:bg-slate-700 rounded-full transition-colors"><X size={20} /></button></div><div className="overflow-y-auto p-6 space-y-6">{selectedTransaction.photo_url ? (<div className="rounded-2xl overflow-hidden border-4 border-slate-100 bg-slate-50 shadow-inner"><img src={selectedTransaction.photo_url} alt="Comprovante" className="w-full h-auto object-cover" /></div>) : <div className="h-32 bg-slate-50 rounded-2xl flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-200"><Eye size={32} className="mb-2 opacity-50" /><span className="text-xs font-medium">Sem foto</span></div>}<div className="space-y-4"><div className="flex justify-between items-start border-b border-slate-100 pb-4"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Veículo / Cliente</p><p className="font-bold text-xl text-slate-900">{selectedTransaction.vehicle_model}</p><p className="text-sm text-slate-500">{selectedTransaction.customer_name}</p></div><div className="text-right"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Valor Bruto</p><p className="font-bold text-xl text-emerald-600">R$ {Number(selectedTransaction.gross_amount || selectedTransaction.amount).toFixed(2)}</p></div></div><div className="grid grid-cols-2 gap-4"><div className="bg-slate-50 p-3 rounded-xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Método</p><p className="font-medium text-slate-700 capitalize">{selectedTransaction.payment_method}</p></div><div className="bg-slate-50 p-3 rounded-xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Parcelas</p><p className="font-medium text-slate-700">{selectedTransaction.installments}x</p></div>{selectedTransaction.net_amount && <div className="bg-blue-50 p-3 rounded-xl col-span-2 border border-blue-100"><p className="text-[10px] font-bold text-blue-400 uppercase">Líquido (Empresa)</p><p className="font-bold text-blue-700 text-lg">R$ {Number(selectedTransaction.net_amount).toFixed(2)}</p></div>}{selectedTransaction.commission_amount > 0 && <div className="bg-emerald-50 p-3 rounded-xl col-span-2 border border-emerald-100"><p className="text-[10px] font-bold text-emerald-500 uppercase">Comissão (Instalador)</p><p className="font-bold text-emerald-700 text-lg">R$ {Number(selectedTransaction.commission_amount).toFixed(2)}</p></div>}</div></div></div></div></div>)}
