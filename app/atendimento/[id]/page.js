@@ -4,6 +4,7 @@ import { useEffect, useState, use } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
 import { Camera, Save, ArrowLeft, DollarSign, Package, CreditCard, Image as ImageIcon } from 'lucide-react';
+import imageCompression from 'browser-image-compression';
 
 export default function AtendimentoPage({ params }) {
   const resolvedParams = use(params);
@@ -100,7 +101,16 @@ export default function AtendimentoPage({ params }) {
       const fileExt = photoFile.name.split('.').pop();
       const fileName = `${id}_${Date.now()}.${fileExt}`;
       const filePath = `comprovantes/${fileName}`;
-      const { error: uploadError } = await supabase.storage.from('service-photos').upload(filePath, photoFile);
+      
+      // Comprime a imagem antes de fazer o upload
+      const options = {
+        maxSizeMB: 0.5,
+        maxWidthOrHeight: 1920,
+        useWebWorker: true
+      };
+      const compressedFile = await imageCompression(photoFile, options);
+      
+      const { error: uploadError } = await supabase.storage.from('service-photos').upload(filePath, compressedFile);
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('service-photos').getPublicUrl(filePath);
 
